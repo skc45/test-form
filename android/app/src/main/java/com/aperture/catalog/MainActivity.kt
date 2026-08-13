@@ -44,8 +44,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.parseColor("#070708")
-        window.navigationBarColor = Color.parseColor("#070708")
+        window.statusBarColor = Color.parseColor("#1C5FA8")
+        window.navigationBarColor = Color.parseColor("#1C5FA8")
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             .build()
 
         webView = WebView(this).apply {
-            setBackgroundColor(Color.parseColor("#070708"))
+            setBackgroundColor(Color.parseColor("#1C5FA8"))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
