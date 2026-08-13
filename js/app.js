@@ -433,6 +433,10 @@ async function openDirectoryHandle(handle) {
 }
 
 async function openFolderPicker() {
+  if (window.ApertureAndroid?.openFolder) {
+    window.ApertureAndroid.openFolder();
+    return;
+  }
   if (window.showDirectoryPicker) {
     try {
       const dir = await window.showDirectoryPicker({ mode: "read" });
@@ -446,6 +450,10 @@ async function openFolderPicker() {
 }
 
 async function reopenCachedFolder() {
+  if (window.ApertureAndroid?.openFolder) {
+    window.ApertureAndroid.openFolder();
+    return;
+  }
   const handle = state.folderHandle || (await cache.loadFolderHandle());
   if (!handle) {
     els.folderInput.click();
@@ -754,7 +762,32 @@ async function wire() {
 
   window.addEventListener("keydown", onKey);
   window.addEventListener("hashchange", onHash);
+  window.addEventListener("aperture-native-catalog", async () => {
+    const loaded = await loadFromApi();
+    if (!loaded) {
+      paintCacheCard(await cache.loadSession());
+      showOpener();
+    }
+  });
   onHash();
 }
+
+function apertureHandleBack() {
+  if (!els.help.hidden) {
+    els.help.hidden = true;
+    return true;
+  }
+  if (state.open) {
+    closeViewer();
+    return true;
+  }
+  if (!els.opener.hidden && state.photos.length) {
+    hideOpener();
+    return true;
+  }
+  return false;
+}
+
+window.apertureHandleBack = apertureHandleBack;
 
 wire();

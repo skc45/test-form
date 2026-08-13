@@ -8,7 +8,7 @@
   --gold-2: #e4c896;
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --topbar: 76px;
+  --topbar: calc(76px + env(safe-area-inset-top, 0px));
   color-scheme: dark;
 }
 
@@ -80,7 +80,7 @@ kbd {
   grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
   align-items: center;
   gap: 1rem;
-  padding: 0 1.25rem;
+  padding: env(safe-area-inset-top, 0px) 1.25rem 0;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(7, 7, 8, 0.96), rgba(7, 7, 8, 0.88));
   backdrop-filter: blur(16px);
@@ -437,7 +437,7 @@ kbd {
 
 .viewer-stage {
   position: absolute;
-  inset: 0 0 92px;
+  inset: 0 0 calc(92px + env(safe-area-inset-bottom, 0px));
   overflow: hidden;
   display: grid;
   place-items: center;
@@ -485,7 +485,7 @@ kbd {
 .nav-hit {
   position: absolute;
   top: 0;
-  bottom: 92px;
+  bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   width: 18vw;
   max-width: 220px;
   border: 0;
@@ -552,7 +552,7 @@ kbd {
   grid-template-columns: 110px 1fr auto;
   gap: 1rem;
   align-items: start;
-  padding: 1.1rem 1.2rem;
+  padding: calc(1.1rem + env(safe-area-inset-top, 0px)) 1.2rem 1.1rem;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
   z-index: 4;
 }
@@ -587,10 +587,10 @@ kbd {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 92px;
+  height: calc(92px + env(safe-area-inset-bottom, 0px));
   display: flex;
   gap: 0.45rem;
-  padding: 0.7rem 1rem 1rem;
+  padding: 0.7rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
   overflow-x: auto;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.2));
   z-index: 4;

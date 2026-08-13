@@ -1,0 +1,1 @@
+# Keep the assets folder in git. Web files are copied here by Gradle (syncWebAssets).

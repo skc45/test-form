@@ -33,6 +33,28 @@ Install a desktop menu entry (Linux) so Aperture appears in your app launcher an
 
 On Windows, run `aperture.bat`. The window uses Chrome/Chromium in app mode when available; otherwise it opens in your default browser.
 
+## Android app
+
+The `android/` folder is a native app that wraps the same catalog in a WebView. It uses the system folder picker (Storage Access Framework) and keeps the last folder in app storage so it reopens on the next launch.
+
+Open `android/` in Android Studio, or build a debug APK:
+
+```bash
+cd android
+# set sdk.dir in local.properties, then:
+./gradlew :app:assembleDebug
+```
+
+The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. Minimum Android version is 8.0 (API 26).
+
+On a device or emulator:
+
+1. Install the APK
+2. Open **Aperture**
+3. Tap **Choose folder** and grant access to a photo directory
+4. That folder is cached and restored the next time you open the app
+
+
 ## Browser
 
 ```bash
