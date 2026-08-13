@@ -45,14 +45,22 @@ class ScanFolderTests(unittest.TestCase):
 class ServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name) / "photos"
+        self.root.mkdir()
         (self.root / "plate.png").write_bytes(TINY_PNG)
+        self.cache_dir = Path(self.tmp.name) / "cache"
+        self.old_cache = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(self.cache_dir)
         self.server = app.run_server(self.root, 0)
         self.host, self.port = self.server.server_address
 
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
+        if self.old_cache is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old_cache
         self.tmp.cleanup()
 
     def _get(self, path: str):
@@ -85,6 +93,44 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"Open folder", body)
         self.assertIn(b"Tap to download", body)
+        self.assertIn(b'id="postForm"', body)
+        self.assertIn(b"New post", body)
+
+    def test_post_saves_plate_and_caption(self):
+        boundary = "----ApertureBoundary7"
+        payload = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="title"\r\n\r\n'
+            "Ridge\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="caption"\r\n\r\n'
+            "Golden hour\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="plate"; filename="ridge.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode("utf-8") + TINY_PNG + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/post",
+            payload,
+            {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["caption"], "Golden hour")
+        posted = app.cache_home() / "posts" / data["file"]
+        self.assertTrue(posted.is_file())
+        self.assertEqual(posted.read_bytes(), TINY_PNG)
+        metas = list((app.cache_home() / "posts").glob("*.json"))
+        self.assertEqual(len(metas), 1)
+        meta = json.loads(metas[0].read_text(encoding="utf-8"))
+        self.assertEqual(meta["caption"], "Golden hour")
+        self.assertEqual(meta["title"], "Ridge")
+        self.assertEqual(meta["file"], data["file"])
 
 
 class CacheTests(unittest.TestCase):

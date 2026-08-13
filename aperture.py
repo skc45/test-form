@@ -22,6 +22,8 @@ import threading
 import time
 import webbrowser
 from datetime import datetime
+from email import message_from_bytes
+from email.policy import default as email_policy
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -363,6 +365,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/post":
+            self._save_post()
+            return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
             return
@@ -405,6 +410,67 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             seen.add(key)
             folders.append(resolved)
         return folders
+
+    def _save_post(self) -> None:
+        content_type = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" not in content_type:
+            self.send_error(400, "Expected multipart form")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self.send_error(400, "Invalid post")
+            return
+        fields, files = self._parse_multipart(content_type, self.rfile.read(length))
+        plate = files.get("plate") or files.get("file")
+        if not plate:
+            self.send_error(400, "Missing plate")
+            return
+        filename, payload, ctype = plate
+        if not payload:
+            self.send_error(400, "Empty plate")
+            return
+        posts = cache_home() / "posts"
+        posts.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe = "".join(ch if ch.isalnum() or ch in ".-_" else "-" for ch in filename) or "plate.jpg"
+        image_path = posts / f"{stamp}-{safe}"
+        image_path.write_bytes(payload)
+        meta = {
+            "title": fields.get("title") or "",
+            "caption": fields.get("caption") or "",
+            "file": image_path.name,
+            "type": ctype,
+            "sentAt": datetime.now().isoformat(timespec="seconds"),
+        }
+        (posts / f"{stamp}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        self._send_json({"ok": True, "file": image_path.name, "caption": meta["caption"]})
+
+    def _parse_multipart(self, content_type: str, raw: bytes) -> tuple[dict, dict]:
+        header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+        message = message_from_bytes(header + raw, policy=email_policy)
+        fields: dict[str, str] = {}
+        files: dict[str, tuple[str, bytes, str]] = {}
+        parts = message.get_payload()
+        if not isinstance(parts, list):
+            return fields, files
+        for part in parts:
+            name = part.get_param("name", header="content-disposition")
+            if not name:
+                continue
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+            if filename:
+                files[str(name)] = (
+                    Path(str(filename)).name,
+                    payload,
+                    part.get_content_type() or "application/octet-stream",
+                )
+            else:
+                fields[str(name)] = payload.decode("utf-8", "replace")
+        return fields, files
 
     def _read_json(self) -> dict:
         try:

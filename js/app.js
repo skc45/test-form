@@ -25,6 +25,7 @@ const state = {
   blobUrls: [],
   recents: [],
   selectedIds: [],
+  postPhoto: null,
 };
 
 const els = {
@@ -60,6 +61,14 @@ const els = {
   downloadBar: document.getElementById("downloadBar"),
   downloadCopy: document.getElementById("downloadCopy"),
   downloadFill: document.getElementById("downloadFill"),
+  postForm: document.getElementById("postForm"),
+  postCard: document.getElementById("postCard"),
+  postPreview: document.getElementById("postPreview"),
+  postCaption: document.getElementById("postCaption"),
+  postStatus: document.getElementById("postStatus"),
+  postTrack: document.getElementById("postTrack"),
+  postFill: document.getElementById("postFill"),
+  postSend: document.getElementById("postSend"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -68,6 +77,8 @@ let slideTimer = 0;
 let chromeTimer = 0;
 let downloadTimer = 0;
 let downloadBusy = false;
+let postBusy = false;
+let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 
 function slug(value) {
@@ -221,7 +232,10 @@ function renderHero() {
   els.heroTitle.textContent = featured.title;
   els.heroMeta.textContent = photoMeta(featured);
   els.heroIndex.textContent = `Plate ${plateNumber(featured.index)}`;
-  els.heroBtn.onclick = () => openViewer(featured.id);
+  els.heroBtn.onclick = () => {
+    if (longPressConsumed()) return;
+    openViewer(featured.id);
+  };
 }
 
 function renderCatalog() {
@@ -253,7 +267,11 @@ function renderCatalog() {
   [...els.catalog.querySelectorAll(".card")].forEach((card, i) => {
     const photo = photos[i];
     bindImage(card.querySelector("img"), photo);
-    card.addEventListener("click", () => openViewer(photo.id));
+    card.addEventListener("click", () => {
+      if (longPressConsumed()) return;
+      openViewer(photo.id);
+    });
+    attachLongPress(card, () => openPostForm(photo));
   });
 }
 
@@ -270,7 +288,11 @@ function renderFilmstrip(photos) {
     .join("");
   [...els.filmstrip.querySelectorAll(".thumb")].forEach((thumb, i) => {
     bindImage(thumb.querySelector("img"), photos[i]);
-    thumb.addEventListener("click", () => showIndex(i));
+    thumb.addEventListener("click", () => {
+      if (longPressConsumed()) return;
+      showIndex(i);
+    });
+    attachLongPress(thumb, () => openPostForm(photos[i]));
   });
   const selected = els.filmstrip.querySelector('[aria-selected="true"]');
   selected?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
@@ -426,7 +448,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts";
+    hint.innerHTML = "Open a folder · click a plate · long-press to send · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts";
   }
 }
 
@@ -826,6 +848,13 @@ function onHash() {
 }
 
 function onKey(event) {
+  if (els.postForm && !els.postForm.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePostForm();
+    }
+    return;
+  }
   if (event.key === "o" || event.key === "O") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
@@ -994,7 +1023,7 @@ function nativeDownload(src, filename) {
 }
 
 async function downloadCurrent() {
-  if (!state.open || downloadBusy) return;
+  if (!state.open || downloadBusy || longPressConsumed()) return;
   const photo = visiblePhotos()[state.activeIndex];
   if (!photo) return;
   downloadBusy = true;
@@ -1020,6 +1049,193 @@ async function downloadCurrent() {
     finishDownload(true, "Saved");
   } catch {
     finishDownload(false, "Could not download");
+  }
+}
+
+function longPressConsumed() {
+  return Date.now() < (longPress.suppressUntil || 0);
+}
+
+function markLongPress() {
+  longPress.fired = true;
+  longPress.suppressUntil = Date.now() + 700;
+}
+
+function attachLongPress(el, onLong) {
+  if (!el) return;
+  const start = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    longPress.fired = false;
+    longPress.x = event.clientX;
+    longPress.y = event.clientY;
+    window.clearTimeout(longPress.timer);
+    longPress.timer = window.setTimeout(() => {
+      markLongPress();
+      onLong();
+    }, 480);
+  };
+  const move = (event) => {
+    if (Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y) > 14) {
+      window.clearTimeout(longPress.timer);
+    }
+  };
+  const end = () => window.clearTimeout(longPress.timer);
+  el.addEventListener("pointerdown", start);
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener("contextmenu", (event) => {
+    if (longPressConsumed()) event.preventDefault();
+  });
+  el.addEventListener(
+    "click",
+    (event) => {
+      if (!longPressConsumed()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+}
+
+function openPostForm(photo) {
+  if (!photo || !els.postForm) return;
+  window.clearTimeout(longPress.timer);
+  state.postPhoto = photo;
+  postBusy = false;
+  const src = photo.hero || photo.src || photo.thumb;
+  els.postPreview.src = src;
+  els.postPreview.alt = photo.title || "Plate";
+  els.postCaption.value = [photo.title, photo.location].filter(Boolean).join(" · ");
+  els.postStatus.hidden = true;
+  els.postTrack.hidden = true;
+  els.postFill.style.width = "0%";
+  els.postSend.disabled = false;
+  els.postForm.hidden = false;
+  els.postCaption.focus();
+  els.postCaption.select();
+}
+
+function closePostForm() {
+  if (!els.postForm) return;
+  els.postForm.hidden = true;
+  state.postPhoto = null;
+  postBusy = false;
+}
+
+function setPostProgress(pct, label) {
+  if (els.postTrack) els.postTrack.hidden = false;
+  if (els.postFill) els.postFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (label && els.postStatus) {
+    els.postStatus.hidden = false;
+    els.postStatus.textContent = label;
+  }
+}
+
+async function plateBlob(photo, onProgress) {
+  try {
+    return await fetchBlobWithProgress(photo.src, onProgress);
+  } catch {
+    if (state.open && visiblePhotos()[state.activeIndex]?.id === photo.id) {
+      onProgress(75);
+      return blobFromViewer();
+    }
+    throw new Error("no blob");
+  }
+}
+
+function nativeShare(src, filename, caption) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("timeout")), 45000);
+    window.aperturePostProgress = (pct) => {
+      if (pct < 0) {
+        window.clearTimeout(timer);
+        reject(new Error("share failed"));
+        return;
+      }
+      setPostProgress(pct, pct >= 100 ? "Opening send…" : `Preparing… ${pct}%`);
+      if (pct >= 100) {
+        window.clearTimeout(timer);
+        resolve();
+      }
+    };
+    window.ApertureAndroid.share(src, filename, caption);
+  });
+}
+
+function postViaShareApi(file, caption, title) {
+  if (!navigator.share) return Promise.reject(new Error("no share"));
+  const payload = { title, text: caption };
+  if (navigator.canShare?.({ files: [file] })) payload.files = [file];
+  return navigator.share(payload);
+}
+
+function postViaHttp(file, caption, title, onProgress) {
+  return new Promise((resolve, reject) => {
+    const body = new FormData();
+    body.append("title", title);
+    body.append("caption", caption);
+    body.append("plate", file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/post");
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText || "{}"));
+        } catch {
+          resolve({ ok: true });
+        }
+        return;
+      }
+      reject(new Error("post failed"));
+    };
+    xhr.onerror = () => reject(new Error("post failed"));
+    xhr.send(body);
+  });
+}
+
+async function sendPost(event) {
+  event?.preventDefault();
+  const photo = state.postPhoto;
+  if (!photo || postBusy) return;
+  postBusy = true;
+  els.postSend.disabled = true;
+  const caption = els.postCaption.value.trim();
+  const filename = downloadFilename(photo);
+  setPostProgress(6, "Preparing plate…");
+  try {
+    if (window.ApertureAndroid?.share) {
+      await nativeShare(photo.src, filename, caption);
+      setPostProgress(100, "Sent");
+      window.setTimeout(closePostForm, 500);
+      return;
+    }
+    const blob = await plateBlob(photo, (pct) => setPostProgress(Math.max(8, pct), "Preparing plate…"));
+    const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+    try {
+      const result = await postViaHttp(file, caption, photo.title || filename, (pct) => {
+        setPostProgress(Math.max(12, pct), `Sending… ${pct}%`);
+      });
+      if (result?.ok !== false) {
+        setPostProgress(100, "Sent");
+        window.setTimeout(closePostForm, 700);
+        return;
+      }
+    } catch {
+      /* fall through to share sheet */
+    }
+    await postViaShareApi(file, caption, photo.title || "Aperture");
+    setPostProgress(100, "Sent");
+    window.setTimeout(closePostForm, 400);
+  } catch {
+    postBusy = false;
+    els.postSend.disabled = false;
+    setPostProgress(0, "Could not send");
+    if (els.postTrack) els.postTrack.hidden = true;
   }
 }
 
@@ -1106,6 +1322,19 @@ async function wire() {
   document.getElementById("fullBtn").addEventListener("click", toggleFullscreen);
   document.getElementById("downloadBtn").addEventListener("click", downloadCurrent);
   els.downloadBar?.addEventListener("click", downloadCurrent);
+  attachLongPress(els.downloadBar, () => {
+    const photo = visiblePhotos()[state.activeIndex];
+    if (photo) openPostForm(photo);
+  });
+  attachLongPress(els.heroBtn, () => {
+    const featured = state.photos.find((p) => p.featured) || state.photos[0];
+    if (featured) openPostForm(featured);
+  });
+  els.postCard?.addEventListener("submit", sendPost);
+  document.getElementById("postCancel")?.addEventListener("click", closePostForm);
+  els.postForm?.addEventListener("click", (event) => {
+    if (event.target === els.postForm) closePostForm();
+  });
   document.getElementById("helpClose").addEventListener("click", () => {
     els.help.hidden = true;
   });
@@ -1125,6 +1354,16 @@ async function wire() {
   );
 
   els.viewerImage.addEventListener("pointerdown", (event) => {
+    longPress.fired = false;
+    longPress.x = event.clientX;
+    longPress.y = event.clientY;
+    window.clearTimeout(longPress.timer);
+    longPress.timer = window.setTimeout(() => {
+      const photo = visiblePhotos()[state.activeIndex];
+      if (!photo) return;
+      markLongPress();
+      openPostForm(photo);
+    }, 480);
     if (state.zoom === 1) {
       swipe = { x: event.clientX, t: Date.now() };
       return;
@@ -1135,6 +1374,9 @@ async function wire() {
   });
 
   els.viewerImage.addEventListener("pointermove", (event) => {
+    if (Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y) > 14) {
+      window.clearTimeout(longPress.timer);
+    }
     if (!state.dragging) return;
     state.panX = event.clientX - state.pointer.x;
     state.panY = event.clientY - state.pointer.y;
@@ -1142,6 +1384,11 @@ async function wire() {
   });
 
   els.viewerImage.addEventListener("pointerup", (event) => {
+    window.clearTimeout(longPress.timer);
+    if (longPressConsumed()) {
+      state.dragging = false;
+      return;
+    }
     if (state.dragging) {
       state.dragging = false;
       return;
@@ -1149,6 +1396,8 @@ async function wire() {
     const dx = event.clientX - swipe.x;
     if (Math.abs(dx) > 60 && Date.now() - swipe.t < 600) next(dx < 0 ? 1 : -1);
   });
+  els.viewerImage.addEventListener("pointercancel", () => window.clearTimeout(longPress.timer));
+  els.viewerImage.addEventListener("contextmenu", (event) => event.preventDefault());
 
   ["dragenter", "dragover"].forEach((type) => {
     window.addEventListener(type, (event) => {
@@ -1184,6 +1433,10 @@ async function wire() {
 function apertureHandleBack() {
   if (!els.help.hidden) {
     els.help.hidden = true;
+    return true;
+  }
+  if (els.postForm && !els.postForm.hidden) {
+    closePostForm();
     return true;
   }
   if (state.open) {

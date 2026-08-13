@@ -13,6 +13,7 @@ import androidx.documentfile.provider.DocumentFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -343,6 +344,48 @@ class CatalogStore(private val context: Context) {
             }
         }
         return saveHttp(url, filename, onProgress)
+    }
+
+    fun exportToFile(url: String, dest: File, onProgress: (Int) -> Unit): Boolean {
+        onProgress(4)
+        dest.parentFile?.mkdirs()
+        val rel = mediaRelFrom(url)
+        if (rel != null) {
+            val key = listOf(rel, Uri.decode(rel)).firstOrNull { media.containsKey(it) }
+            if (key != null) {
+                val entry = media[key] ?: return false
+                val total = context.contentResolver.openAssetFileDescriptor(entry.first, "r")?.use { it.length } ?: -1L
+                val input = context.contentResolver.openInputStream(entry.first) ?: return false
+                return input.use { stream ->
+                    dest.outputStream().use { output ->
+                        copyWithProgress(stream, output, total, onProgress)
+                    }
+                    onProgress(99)
+                    true
+                }
+            }
+        }
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 15000
+        connection.readTimeout = 30000
+        connection.connect()
+        if (connection.responseCode !in 200..299) {
+            connection.disconnect()
+            return false
+        }
+        return try {
+            val total = connection.contentLengthLong
+            connection.inputStream.use { stream ->
+                dest.outputStream().use { output ->
+                    copyWithProgress(stream, output, total, onProgress)
+                }
+            }
+            onProgress(99)
+            true
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun mediaRelFrom(url: String): String? {

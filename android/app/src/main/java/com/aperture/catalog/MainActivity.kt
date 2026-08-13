@@ -2,11 +2,13 @@ package com.aperture.catalog
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.core.content.FileProvider
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -195,6 +197,13 @@ class MainActivity : AppCompatActivity() {
                 startDownload(url, filename)
             }
         }
+
+        @JavascriptInterface
+        fun share(url: String, filename: String, caption: String) {
+            runOnUiThread {
+                startShare(url, filename, caption)
+            }
+        }
     }
 
     private fun startDownload(url: String, filename: String) {
@@ -216,6 +225,45 @@ class MainActivity : AppCompatActivity() {
                 null,
             )
         }
+    }
+
+    private fun notifyPost(pct: Int) {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "window.aperturePostProgress && window.aperturePostProgress($pct)",
+                null,
+            )
+        }
+    }
+
+    private fun startShare(url: String, filename: String, caption: String) {
+        notifyPost(6)
+        Thread {
+            val safe = filename.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "plate.jpg" }
+            val dest = java.io.File(cacheDir, "share/$safe")
+            val ok = try {
+                store.exportToFile(url, dest) { pct -> notifyPost(pct) }
+            } catch (_: Exception) {
+                false
+            }
+            if (!ok || !dest.exists()) {
+                notifyPost(-1)
+                return@Thread
+            }
+            runOnUiThread {
+                val uri = FileProvider.getUriForFile(this, "$packageName.files", dest)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = CatalogStore.mimeFor(safe)
+                    clipData = android.content.ClipData.newUri(contentResolver, "plate", uri)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_TEXT, caption)
+                    putExtra(Intent.EXTRA_SUBJECT, caption.ifBlank { safe })
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Send plate"))
+                notifyPost(100)
+            }
+        }.start()
     }
 
     override fun onDestroy() {
