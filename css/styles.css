@@ -441,7 +441,7 @@ kbd {
   overflow: hidden;
   display: grid;
   place-items: center;
-  cursor: none;
+  cursor: grab;
 }
 
 .viewer-image {
