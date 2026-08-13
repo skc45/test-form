@@ -25,10 +25,11 @@ from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 CACHE_ENV = "APERTURE_CACHE_DIR"
+MAX_RECENTS = 3
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -75,13 +76,104 @@ def chrome_profile_dir() -> Path:
     return path
 
 
+class Runtime:
+    """Mutable server state so recent plates can switch the open folder."""
+
+    def __init__(self, folder: Path | None = None):
+        self.folder = folder.resolve() if folder else None
+
+
+def folder_name_from_path(path: str) -> str:
+    return Path(str(path)).name or str(path)
+
+
+def recent_id(item) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("id") or item.get("path") or "").strip()
+
+
+def as_recent(item, photo_count: int | None = None) -> dict | None:
+    if isinstance(item, str):
+        path = item.strip()
+        if not path:
+            return None
+        return {
+            "id": path,
+            "path": path,
+            "name": folder_name_from_path(path),
+            "photoCount": int(photo_count or 0),
+            "openedAt": "",
+            "cover": "",
+        }
+    if not isinstance(item, dict):
+        return None
+    path = str(item.get("path") or item.get("id") or "").strip()
+    ident = str(item.get("id") or path).strip()
+    if not ident:
+        return None
+    try:
+        count = int(item.get("photoCount") or photo_count or 0)
+    except (TypeError, ValueError):
+        count = int(photo_count or 0)
+    return {
+        "id": ident,
+        "path": path or ident,
+        "name": str(item.get("name") or folder_name_from_path(path or ident)),
+        "photoCount": count,
+        "openedAt": str(item.get("openedAt") or ""),
+        "cover": str(item.get("cover") or ""),
+    }
+
+
+def normalize_recents(raw) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        entry = as_recent(item)
+        if not entry or entry["id"] in seen:
+            continue
+        seen.add(entry["id"])
+        out.append(entry)
+        if len(out) == MAX_RECENTS:
+            break
+    return out
+
+
+def upsert_recent(recents, entry: dict) -> list[dict]:
+    next_item = as_recent(entry)
+    if not next_item:
+        return normalize_recents(recents)
+    ident = next_item["id"]
+    rest = [item for item in normalize_recents(recents) if item["id"] != ident]
+    return [next_item, *rest][:MAX_RECENTS]
+
+
+def decorate_recents(recents: list[dict]) -> list[dict]:
+    return [{**item, "cover": f"/api/recent-cover?i={index}"} for index, item in enumerate(recents)]
+
+
+def first_image_in(folder: Path) -> Path | None:
+    if not folder.is_dir():
+        return None
+    for path in sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if is_image(path):
+            return path
+    return None
+
+
 def load_disk_session() -> dict:
     path = session_file()
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        data["recents"] = normalize_recents(data.get("recents"))
+        return data
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -90,10 +182,20 @@ def save_disk_session(update: dict) -> dict:
     home = cache_home()
     home.mkdir(parents=True, exist_ok=True)
     payload = {**load_disk_session(), **update, "updatedAt": datetime.now().isoformat(timespec="seconds")}
+    recents = normalize_recents(payload.get("recents"))
     folder = payload.get("lastFolder")
     if folder:
-        recents = [folder, *[item for item in payload.get("recents") or [] if item != folder]]
-        payload["recents"] = recents[:8]
+        recents = upsert_recent(
+            recents,
+            {
+                "id": str(folder),
+                "path": str(folder),
+                "name": payload.get("lastFolderName") or folder_name_from_path(str(folder)),
+                "photoCount": payload.get("photoCount") or 0,
+                "openedAt": payload.get("updatedAt"),
+            },
+        )
+    payload["recents"] = recents
     tmp = home / "session.json.tmp"
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     tmp.replace(session_file())
@@ -185,10 +287,14 @@ def scan_folder(folder: Path) -> list[dict]:
 
 
 class ApertureHandler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, folder: Path | None = None, app_mode: bool = True, **kwargs):
-        self.folder = folder.resolve() if folder else None
+    def __init__(self, *args, runtime: Runtime | None = None, folder: Path | None = None, app_mode: bool = True, **kwargs):
+        self.runtime = runtime or Runtime(folder)
         self.app_mode = app_mode
         super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    @property
+    def folder(self) -> Path | None:
+        return self.runtime.folder
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         sys.stderr.write("Aperture: " + (format % args) + "\n")
@@ -205,6 +311,7 @@ class ApertureHandler(SimpleHTTPRequestHandler):
                     "app": self.app_mode,
                     "cached": bool(session.get("lastFolder")),
                     "photos": photos,
+                    "recents": decorate_recents(session.get("recents") or []),
                 }
             )
             return
@@ -212,12 +319,52 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             session = load_disk_session()
             last = session.get("lastFolder")
             exists = bool(last and Path(last).expanduser().is_dir())
-            self._send_json({**session, "exists": exists})
+            recents = decorate_recents(session.get("recents") or [])
+            self._send_json({**session, "exists": exists, "recents": recents})
+            return
+        if parsed.path == "/api/recent-cover":
+            self._send_recent_cover(parsed.query)
             return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
             return
         super().do_GET()
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/open":
+            self.send_error(404, "Not found")
+            return
+        body = self._read_json()
+        raw = str(body.get("path") or "").strip()
+        folder = Path(raw).expanduser() if raw else None
+        if not folder or not folder.is_dir():
+            self.send_error(404, "Folder not found")
+            return
+        folder = folder.resolve()
+        photos = scan_folder(folder)
+        remember_folder(folder, len(photos))
+        self.runtime.folder = folder
+        self._send_json(
+            {
+                "ok": True,
+                "folder": folder.name,
+                "path": str(folder),
+                "photos": photos,
+            }
+        )
+
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+            return data if isinstance(data, dict) else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
 
     def _send_json(self, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -228,13 +375,8 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_media(self, rel: str) -> None:
-        if not self.folder:
-            self.send_error(404, "No folder open")
-            return
-        rel = posixpath.normpath(rel).lstrip("/")
-        path = (self.folder / rel).resolve()
-        if not safe_under(self.folder, path) or not is_image(path):
+    def _send_image_file(self, path: Path) -> None:
+        if not is_image(path):
             self.send_error(404, "Not found")
             return
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -245,6 +387,34 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "public, max-age=60")
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_recent_cover(self, query: str) -> None:
+        try:
+            index = int((parse_qs(query).get("i") or ["0"])[0])
+        except ValueError:
+            self.send_error(404, "Not found")
+            return
+        recents = load_disk_session().get("recents") or []
+        if index < 0 or index >= len(recents):
+            self.send_error(404, "Not found")
+            return
+        folder = Path(recents[index]["path"]).expanduser()
+        cover = first_image_in(folder)
+        if not cover:
+            self.send_error(404, "Not found")
+            return
+        self._send_image_file(cover)
+
+    def _send_media(self, rel: str) -> None:
+        if not self.folder:
+            self.send_error(404, "No folder open")
+            return
+        rel = posixpath.normpath(rel).lstrip("/")
+        path = (self.folder / rel).resolve()
+        if not safe_under(self.folder, path) or not is_image(path):
+            self.send_error(404, "Not found")
+            return
+        self._send_image_file(path)
 
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -325,8 +495,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_server(folder: Path | None, port: int) -> ThreadingHTTPServer:
-    handler = partial(ApertureHandler, folder=folder, app_mode=True)
+def run_server(folder: Path | None, port: int, runtime: Runtime | None = None) -> ThreadingHTTPServer:
+    runtime = runtime or Runtime(folder)
+    handler = partial(ApertureHandler, runtime=runtime, app_mode=True)
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

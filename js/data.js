@@ -32,6 +32,8 @@ function idbOp(mode, fn) {
   );
 }
 
+export const MAX_RECENTS = 3;
+
 export function emptySession() {
   return {
     source: "demo",
@@ -41,7 +43,65 @@ export function emptySession() {
     layout: "masonry",
     filter: "all",
     openedAt: "",
+    recents: [],
   };
+}
+
+export function recentId(entry) {
+  return String(entry?.id || entry?.path || entry?.name || "").trim();
+}
+
+export function normalizeRecents(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const item of raw || []) {
+    const entry =
+      typeof item === "string"
+        ? { id: item, path: item, name: item.split(/[\\/]/).filter(Boolean).pop() || item, photoCount: 0, cover: "" }
+        : {
+            id: recentId(item),
+            name: item.name || item.lastFolderName || "Folder",
+            path: item.path || item.lastFolder || "",
+            photoCount: item.photoCount || 0,
+            cover: item.cover || "",
+            openedAt: item.openedAt || item.updatedAt || "",
+          };
+    if (!entry.id || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    out.push(entry);
+    if (out.length === MAX_RECENTS) break;
+  }
+  return out;
+}
+
+export function upsertRecent(recents, entry) {
+  const next = {
+    id: recentId(entry),
+    name: entry.name || "Folder",
+    path: entry.path || "",
+    photoCount: entry.photoCount || 0,
+    cover: entry.cover || "",
+    openedAt: entry.openedAt || new Date().toISOString(),
+  };
+  if (!next.id) return normalizeRecents(recents);
+  return normalizeRecents([next, ...(recents || [])]);
+}
+
+export function recentsFromSession(session) {
+  const extras = [];
+  const path = session?.lastFolder || session?.folderPath || "";
+  const name = session?.lastFolderName || session?.folderName || "";
+  if (path || name) {
+    extras.push({
+      id: path || name,
+      path,
+      name: name || "Folder",
+      photoCount: session.photoCount || 0,
+      cover: session.cover || "",
+      openedAt: session.openedAt || session.updatedAt || "",
+    });
+  }
+  return normalizeRecents([...(session?.recents || []), ...extras]);
 }
 
 export function readLocalSession() {
@@ -86,6 +146,27 @@ export async function loadSession() {
 export async function saveFolderHandle(handle, meta = {}) {
   if (!handle || !idbAvailable()) return;
   await idbOp("readwrite", (store) => store.put({ handle, ...meta, savedAt: Date.now() }, "folderHandle"));
+  const id = recentId(meta);
+  if (id) {
+    const handles = (await loadRecentHandles()) || {};
+    handles[id] = handle;
+    await idbOp("readwrite", (store) => store.put(handles, "recentHandles"));
+  }
+}
+
+export async function loadRecentHandles() {
+  if (!idbAvailable()) return {};
+  try {
+    return (await idbOp("readonly", (store) => store.get("recentHandles"))) || {};
+  } catch {
+    return {};
+  }
+}
+
+export async function loadRecentHandle(id) {
+  if (!id) return loadFolderHandle();
+  const handles = await loadRecentHandles();
+  return handles[id] || loadFolderHandle();
 }
 
 export async function loadFolderHandle() {

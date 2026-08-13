@@ -86,6 +86,10 @@ class MainActivity : AppCompatActivity() {
                             store.forget()
                             store.cacheResponse()
                         }
+                        path == "/api/recent-cover" -> {
+                            val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
+                            store.recentCoverResponse(index)
+                        }
                         path.startsWith("/media/") -> {
                             val rel = Uri.decode(path.removePrefix("/media/"))
                             store.mediaResponse(rel)
@@ -136,6 +140,17 @@ class MainActivity : AppCompatActivity() {
         fun openFolder() {
             runOnUiThread {
                 pickFolder.launch(null)
+            }
+        }
+
+        @JavascriptInterface
+        fun openRecent(index: Int) {
+            runOnUiThread {
+                if (!store.openRecent(index)) {
+                    pickFolder.launch(null)
+                } else {
+                    notifyCatalog()
+                }
             }
         }
 

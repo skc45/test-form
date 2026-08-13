@@ -150,15 +150,13 @@
         <p class="help-kicker">Aperture</p>
         <h2>Open a folder</h2>
         <p class="opener-copy">
-          Choose a directory of photographs. Subfolders become catalog filters. The last folder is kept in local cache and restored the next time you open Aperture.
+          Choose a directory of photographs. Subfolders become catalog filters. Up to three recent folders are kept as plates in local cache.
         </p>
         <div class="cache-card" id="cacheCard" hidden>
-          <p class="help-kicker">Last folder</p>
-          <p class="cache-name" id="cacheName"></p>
-          <p class="cache-meta" id="cacheMeta"></p>
+          <p class="help-kicker">Recent plates</p>
+          <div class="recent-row" id="recentRow"></div>
           <div class="opener-actions">
-            <button class="text-btn opener-primary" id="reopenBtn" type="button">Reopen folder</button>
-            <button class="text-btn" id="forgetBtn" type="button">Forget</button>
+            <button class="text-btn" id="forgetBtn" type="button">Forget recents</button>
           </div>
         </div>
         <div class="opener-actions">

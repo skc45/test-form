@@ -28,8 +28,7 @@ class CatalogStore(private val context: Context) {
     }
 
     fun forget() {
-        val raw = prefs.getString(KEY_URI, "").orEmpty()
-        if (raw.isNotBlank()) {
+        rememberedUris().forEach { raw ->
             try {
                 context.contentResolver.releasePersistableUriPermission(
                     Uri.parse(raw),
@@ -55,6 +54,20 @@ class CatalogStore(private val context: Context) {
             .putLong(KEY_OPENED, System.currentTimeMillis())
             .apply()
         scan(uri)
+        upsertRecent(uri, name, photos.size)
+    }
+
+    fun openRecent(index: Int): Boolean {
+        val recents = recentsArray()
+        if (index < 0 || index >= recents.length()) return false
+        val raw = recents.getJSONObject(index).optString("path").ifBlank {
+            recents.getJSONObject(index).optString("id")
+        }
+        if (raw.isBlank()) return false
+        val uri = Uri.parse(raw)
+        if (!hasPermission(uri)) return false
+        openTree(uri)
+        return true
     }
 
     fun catalogResponse(): WebResourceResponse {
@@ -66,6 +79,7 @@ class CatalogStore(private val context: Context) {
             .put("app", true)
             .put("cached", path.isNotBlank())
             .put("photos", JSONArray(photos))
+            .put("recents", decoratedRecents())
         return json(body)
     }
 
@@ -78,8 +92,34 @@ class CatalogStore(private val context: Context) {
             .put("source", if (path.isBlank()) "demo" else "folder")
             .put("updatedAt", prefs.getLong(KEY_OPENED, 0L).takeIf { it > 0 }?.let { java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(it) } ?: "")
             .put("exists", path.isNotBlank() && hasPermission(Uri.parse(path)))
-            .put("recents", JSONArray())
+            .put("recents", decoratedRecents())
         return json(body)
+    }
+
+    fun recentCoverResponse(index: Int): WebResourceResponse {
+        val recents = recentsArray()
+        if (index < 0 || index >= recents.length()) return notFound()
+        val raw = recents.getJSONObject(index).optString("path").ifBlank {
+            recents.getJSONObject(index).optString("id")
+        }
+        if (raw.isBlank()) return notFound()
+        val current = prefs.getString(KEY_URI, "").orEmpty()
+        if (raw == current && photos.isNotEmpty()) {
+            return mediaResponse(photos[0].optString("id"))
+        }
+        val uri = Uri.parse(raw)
+        if (!hasPermission(uri)) return notFound()
+        val root = DocumentFile.fromTreeUri(context, uri) ?: return notFound()
+        val cover = firstImage(root) ?: return notFound()
+        val stream = context.contentResolver.openInputStream(cover.uri) ?: return notFound()
+        return WebResourceResponse(
+            mimeFor(cover.name ?: "cover.jpg"),
+            null,
+            200,
+            "OK",
+            mapOf("Cache-Control" to "public, max-age=60"),
+            stream,
+        )
     }
 
     fun mediaResponse(rel: String): WebResourceResponse {
@@ -141,6 +181,88 @@ class CatalogStore(private val context: Context) {
         }
     }
 
+    private fun recentsArray(): JSONArray {
+        val raw = prefs.getString(KEY_RECENTS, "").orEmpty()
+        if (raw.isBlank()) {
+            val last = prefs.getString(KEY_URI, "").orEmpty()
+            if (last.isBlank()) return JSONArray()
+            return JSONArray().put(
+                JSONObject()
+                    .put("id", last)
+                    .put("path", last)
+                    .put("name", prefs.getString(KEY_NAME, "Folder"))
+                    .put("photoCount", prefs.getInt(KEY_COUNT, photos.size))
+                    .put("openedAt", prefs.getLong(KEY_OPENED, 0L))
+                    .put("cover", ""),
+            )
+        }
+        return try {
+            JSONArray(raw)
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private fun decoratedRecents(): JSONArray {
+        val recents = recentsArray()
+        val out = JSONArray()
+        val limit = minOf(recents.length(), MAX_RECENTS)
+        for (index in 0 until limit) {
+            val item = recents.getJSONObject(index)
+            item.put("cover", "/api/recent-cover?i=$index")
+            out.put(item)
+        }
+        return out
+    }
+
+    private fun upsertRecent(uri: Uri, name: String, count: Int) {
+        val id = uri.toString()
+        val next = JSONObject()
+            .put("id", id)
+            .put("path", id)
+            .put("name", name)
+            .put("photoCount", count)
+            .put("openedAt", System.currentTimeMillis())
+            .put("cover", "")
+        val existing = recentsArray()
+        val out = JSONArray().put(next)
+        for (index in 0 until existing.length()) {
+            if (out.length() == MAX_RECENTS) break
+            val item = existing.getJSONObject(index)
+            val itemId = item.optString("id").ifBlank { item.optString("path") }
+            if (itemId == id) continue
+            out.put(item)
+        }
+        prefs.edit().putString(KEY_RECENTS, out.toString()).apply()
+    }
+
+    private fun rememberedUris(): List<String> {
+        val uris = linkedSetOf<String>()
+        prefs.getString(KEY_URI, "")?.takeIf { it.isNotBlank() }?.let { uris.add(it) }
+        val recents = try {
+            JSONArray(prefs.getString(KEY_RECENTS, "[]").orEmpty().ifBlank { "[]" })
+        } catch (_: Exception) {
+            JSONArray()
+        }
+        for (index in 0 until recents.length()) {
+            recents.getJSONObject(index).optString("path").takeIf { it.isNotBlank() }?.let { uris.add(it) }
+        }
+        return uris.toList()
+    }
+
+    private fun firstImage(dir: DocumentFile): DocumentFile? {
+        val children = dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }
+        for (child in children) {
+            val name = child.name ?: continue
+            if (child.isDirectory) {
+                firstImage(child)?.let { return it }
+                continue
+            }
+            if (isImage(name)) return child
+        }
+        return null
+    }
+
     private fun hasPermission(uri: Uri): Boolean {
         return context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
     }
@@ -173,6 +295,8 @@ class CatalogStore(private val context: Context) {
         private const val KEY_NAME = "lastFolderName"
         private const val KEY_OPENED = "openedAt"
         private const val KEY_COUNT = "photoCount"
+        private const val KEY_RECENTS = "recents"
+        private const val MAX_RECENTS = 3
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

@@ -118,8 +118,70 @@ class CacheTests(unittest.TestCase):
         app.remember_folder(self.photos)
         app.remember_folder(other)
         recents = app.load_disk_session()["recents"]
-        self.assertEqual(recents[0], str(other))
-        self.assertIn(str(self.photos), recents)
+        self.assertEqual(recents[0]["path"], str(other))
+        self.assertEqual(recents[1]["path"], str(self.photos))
+        self.assertEqual(recents[0]["name"], other.name)
+
+    def test_recents_cap_at_three(self):
+        folders = []
+        for index in range(5):
+            folder = Path(self.tmp.name) / f"album-{index}"
+            folder.mkdir()
+            (folder / "plate.png").write_bytes(TINY_PNG)
+            app.remember_folder(folder, 1)
+            folders.append(folder)
+        recents = app.load_disk_session()["recents"]
+        self.assertEqual(len(recents), 3)
+        self.assertEqual(
+            [item["path"] for item in recents],
+            [str(folders[4]), str(folders[3]), str(folders[2])],
+        )
+
+    def test_migrates_string_recents(self):
+        app.save_disk_session({"lastFolder": str(self.photos), "recents": [str(self.photos)]})
+        recents = app.load_disk_session()["recents"]
+        self.assertEqual(recents[0]["path"], str(self.photos))
+        self.assertEqual(recents[0]["name"], self.photos.name)
+        self.assertLessEqual(len(recents), 3)
+
+    def test_recent_cover_and_open(self):
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        (other / "b.png").write_bytes(TINY_PNG)
+        app.remember_folder(self.photos, 1)
+        runtime = app.Runtime(self.photos)
+        server = app.run_server(self.photos, 0, runtime=runtime)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/recent-cover?i=0")
+            response = conn.getresponse()
+            body = response.read()
+            ctype = response.getheader("Content-Type")
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(ctype.startswith("image/"))
+            self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            payload = json.dumps({"path": str(other)})
+            conn.request("POST", "/api/open", payload, {"Content-Type": "application/json"})
+            response = conn.getresponse()
+            data = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(data["folder"], other.name)
+            self.assertEqual(runtime.folder, other.resolve())
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/catalog")
+            catalog = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertEqual(catalog["folder"], other.name)
+            self.assertEqual(len(catalog["photos"]), 1)
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_missing_cached_folder_is_ignored(self):
         missing = Path(self.tmp.name) / "gone"
@@ -144,6 +206,8 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertTrue(payload["exists"])
             self.assertEqual(payload["lastFolderName"], self.photos.name)
+            self.assertEqual(payload["recents"][0]["path"], str(self.photos))
+            self.assertTrue(payload["recents"][0]["cover"].startswith("/api/recent-cover"))
 
             conn = HTTPConnection(host, port, timeout=5)
             conn.request("DELETE", "/api/cache")

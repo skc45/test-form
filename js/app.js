@@ -51,8 +51,7 @@ const els = {
   help: document.getElementById("help"),
   opener: document.getElementById("opener"),
   cacheCard: document.getElementById("cacheCard"),
-  cacheName: document.getElementById("cacheName"),
-  cacheMeta: document.getElementById("cacheMeta"),
+  recentRow: document.getElementById("recentRow"),
   catalogHint: document.getElementById("catalogHint"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
@@ -308,11 +307,26 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
 }
 
 function persistCatalog() {
+  void persistCatalogAsync();
+}
+
+async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
       hint.innerHTML = `Cached folder · ${escapeHtml(state.folderName)} · <kbd>O</kbd> change · <kbd>?</kbd> shortcuts`;
     }
+    const session = await cache.loadSession();
+    const cover = await coverFromPhoto(state.photos[0]);
+    const entry = {
+      id: state.folderPath || state.folderName,
+      name: state.folderName,
+      path: state.folderPath,
+      photoCount: state.photos.length,
+      openedAt: new Date().toISOString(),
+      cover,
+    };
+    const recents = cache.upsertRecent(session.recents, entry);
     cache.saveSession({
       source: "folder",
       folderName: state.folderName,
@@ -320,17 +334,59 @@ function persistCatalog() {
       photoCount: state.photos.length,
       layout: state.layout,
       filter: state.filter,
-      openedAt: new Date().toISOString(),
+      openedAt: entry.openedAt,
+      recents,
     });
     cache.saveCatalogIndex(state.photos);
     if (state.folderHandle) {
-      cache.saveFolderHandle(state.folderHandle, { name: state.folderName, path: state.folderPath });
+      cache.saveFolderHandle(state.folderHandle, entry);
     }
     return;
   }
   if (hint) {
     hint.innerHTML = "Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts";
   }
+}
+
+async function coverFromPhoto(photo) {
+  if (!photo) return "";
+  const src = photo.thumb || photo.src || "";
+  if (!src || src.startsWith("/media/") || src.startsWith("/api/")) return "";
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const width = 320;
+      const height = 400;
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve("");
+        return;
+      }
+      const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+      const dw = img.naturalWidth * scale;
+      const dh = img.naturalHeight * scale;
+      ctx.drawImage(img, (width - dw) / 2, (height - dh) / 2, dw, dh);
+      try {
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } catch {
+        resolve("");
+      }
+    };
+    img.onerror = () => resolve("");
+    img.src = src;
+  });
+}
+
+function plateCover(item, index) {
+  if (item.cover && item.cover.startsWith("data:")) return item.cover;
+  const path = item.path || "";
+  if (path.startsWith("/") || path.includes(":\\") || path.startsWith("content:") || path.startsWith("file:")) {
+    return `/api/recent-cover?i=${index}`;
+  }
+  return item.cover || "";
 }
 
 function escapeHtml(value) {
@@ -428,8 +484,19 @@ async function openDirectoryHandle(handle) {
   await walkDirectoryHandle(handle, photos, handle.name);
   if (photos.length) photos[0].featured = true;
   state.folderHandle = handle;
-  setCatalog(photos, { folderName: handle.name, source: "folder", handle });
+  setCatalog(photos, { folderName: handle.name, folderPath: handle.name, source: "folder", handle });
   return photos.length;
+}
+
+async function openFolderOrRecents() {
+  const session = await loadMergedSession();
+  const recents = cache.recentsFromSession(session);
+  if (recents.length) {
+    paintCacheCard(session);
+    showOpener();
+    return;
+  }
+  await openFolderPicker();
 }
 
 async function openFolderPicker() {
@@ -449,41 +516,82 @@ async function openFolderPicker() {
   els.folderInput.click();
 }
 
-async function reopenCachedFolder() {
-  if (window.ApertureAndroid?.openFolder) {
-    window.ApertureAndroid.openFolder();
+async function openRecent(index, id) {
+  if (window.ApertureAndroid?.openRecent) {
+    window.ApertureAndroid.openRecent(index);
     return;
   }
-  const handle = state.folderHandle || (await cache.loadFolderHandle());
-  if (!handle) {
-    els.folderInput.click();
-    return;
+  const handles = await cache.loadRecentHandles();
+  const handle = handles[id];
+  if (handle) {
+    const permission = await cache.requestHandlePermission(handle);
+    if (permission === "granted") {
+      await openDirectoryHandle(handle);
+      return;
+    }
   }
-  const permission = await cache.requestHandlePermission(handle);
-  if (permission !== "granted") {
-    await openFolderPicker();
-    return;
+  const session = await loadMergedSession();
+  const recents = cache.recentsFromSession(session);
+  const item = recents[index] || recents.find((entry) => entry.id === id);
+  if (item?.path) {
+    try {
+      const response = await fetch("/api/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ path: item.path }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.photos) && data.photos.length) {
+          setCatalog(data.photos, {
+            folderName: data.folder || item.name,
+            folderPath: data.path || item.path,
+            source: "folder",
+          });
+          return;
+        }
+      }
+    } catch {
+      /* static hosts have no open API */
+    }
   }
-  state.folderHandle = handle;
-  await openDirectoryHandle(handle);
+  await openFolderPicker();
 }
 
 function paintCacheCard(session) {
-  const name = session?.folderName || session?.lastFolderName;
-  const hasFolder = Boolean(name && (session.source === "folder" || session.lastFolder));
-  els.cacheCard.hidden = !hasFolder;
-  if (!hasFolder) {
+  const recents = cache.recentsFromSession(session);
+  const row = els.recentRow;
+  els.cacheCard.hidden = recents.length === 0;
+  if (!recents.length) {
     document.getElementById("openerFolderBtn").classList.add("opener-primary");
+    if (row) row.innerHTML = "";
     return;
   }
   document.getElementById("openerFolderBtn").classList.remove("opener-primary");
-  els.cacheName.textContent = name;
-  const when = session.openedAt || session.updatedAt
-    ? new Date(session.openedAt || session.updatedAt).toLocaleString()
-    : "saved locally";
-  const count = session.photoCount ? `${session.photoCount} plate${session.photoCount === 1 ? "" : "s"}` : "catalog";
-  const where = session.folderPath || session.lastFolder ? ` · ${session.folderPath || session.lastFolder}` : "";
-  els.cacheMeta.textContent = `${count} · cached ${when}${where}`;
+  if (!row) return;
+  row.innerHTML = recents
+    .map((item, index) => {
+      const cover = plateCover(item, index);
+      const count = item.photoCount
+        ? `${item.photoCount} plate${item.photoCount === 1 ? "" : "s"}`
+        : "Folder";
+      return `
+      <button class="recent-plate" type="button" data-index="${index}" data-id="${escapeHtml(item.id)}">
+        ${cover ? `<img alt="" src="${escapeHtml(cover)}" />` : `<span class="recent-plate-fill"></span>`}
+        <span class="recent-plate-index">${plateNumber(index)}</span>
+        <span class="recent-plate-meta"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(count)}</span></span>
+      </button>`;
+    })
+    .join("");
+  [...row.querySelectorAll(".recent-plate")].forEach((btn) => {
+    const img = btn.querySelector("img");
+    if (img) {
+      if (img.complete && img.naturalWidth) img.classList.add("is-ready");
+      img.addEventListener("load", () => img.classList.add("is-ready"), { once: true });
+      img.addEventListener("error", () => img.classList.add("is-missing"), { once: true });
+    }
+    btn.addEventListener("click", () => openRecent(Number(btn.dataset.index), btn.dataset.id));
+  });
 }
 
 async function forgetFolder() {
@@ -499,26 +607,42 @@ async function forgetFolder() {
   restoreDemo();
 }
 
-async function restoreCachedFolder() {
+async function loadMergedSession() {
   let session = await cache.loadSession();
   try {
     const response = await fetch("/api/cache", { headers: { Accept: "application/json" } });
     if (response.ok) {
       const disk = await response.json();
-      if (disk.lastFolder || disk.lastFolderName) {
-        session = {
-          ...session,
-          source: "folder",
-          folderName: session.folderName || disk.lastFolderName || "",
-          folderPath: session.folderPath || disk.lastFolder || "",
-          photoCount: session.photoCount || disk.photoCount || 0,
-          openedAt: session.openedAt || disk.updatedAt || "",
-        };
-      }
+      session = {
+        ...session,
+        source: disk.lastFolder || session.folderName ? "folder" : session.source,
+        folderName: session.folderName || disk.lastFolderName || "",
+        folderPath: session.folderPath || disk.lastFolder || "",
+        photoCount: session.photoCount || disk.photoCount || 0,
+        openedAt: session.openedAt || disk.updatedAt || "",
+        recents: cache.normalizeRecents([
+          ...(disk.recents || []),
+          ...(session.recents || []),
+          disk.lastFolder
+            ? {
+                id: disk.lastFolder,
+                path: disk.lastFolder,
+                name: disk.lastFolderName || "",
+                photoCount: disk.photoCount || 0,
+                openedAt: disk.updatedAt || "",
+              }
+            : null,
+        ].filter(Boolean)),
+      };
     }
   } catch {
     /* static hosts have no cache API */
   }
+  return session;
+}
+
+async function restoreCachedFolder() {
+  const session = await loadMergedSession();
   if (session.layout === "grid" || session.layout === "masonry") {
     state.layout = session.layout;
   }
@@ -575,7 +699,7 @@ function onKey(event) {
   if (event.key === "o" || event.key === "O") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
-    openFolderPicker();
+    openFolderOrRecents();
     return;
   }
   if (event.key === "?" || (event.shiftKey && event.key === "/")) {
@@ -657,10 +781,10 @@ async function wire() {
     renderFilters();
     renderHero();
     renderCatalog();
-    paintCacheCard(await cache.loadSession());
+    paintCacheCard(await loadMergedSession());
   }
   if (appMode && !fromApi && !fromCache) showOpener();
-  else if (!fromApi && !fromCache && (await cache.loadSession()).source === "folder") showOpener();
+  else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
   els.filters.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-filter]");
@@ -682,9 +806,8 @@ async function wire() {
     persistCatalog();
   });
 
-  els.folderBtn.addEventListener("click", openFolderPicker);
+  els.folderBtn.addEventListener("click", openFolderOrRecents);
   document.getElementById("openerFolderBtn").addEventListener("click", openFolderPicker);
-  document.getElementById("reopenBtn").addEventListener("click", reopenCachedFolder);
   document.getElementById("forgetBtn").addEventListener("click", forgetFolder);
   document.getElementById("demoBtn").addEventListener("click", restoreDemo);
   els.folderInput.addEventListener("change", () => {
@@ -768,7 +891,7 @@ async function wire() {
   window.addEventListener("aperture-native-catalog", async () => {
     const loaded = await loadFromApi();
     if (!loaded) {
-      paintCacheCard(await cache.loadSession());
+      paintCacheCard(await loadMergedSession());
       showOpener();
     }
   });
