@@ -18,6 +18,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("apertureHandleBack", app_js)
         self.assertIn("openRecent", app_js)
         self.assertIn("recent-plate", app_js)
+        self.assertIn("header-plate", app_js)
+        self.assertIn("filter-recents", app_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -25,6 +27,8 @@ class AndroidProjectTests(unittest.TestCase):
         data = (ROOT / "js" / "data.js").read_text(encoding="utf-8")
         self.assertIn('id="recentRow"', html)
         self.assertIn("recent-plate", css)
+        self.assertIn("header-plate", css)
+        self.assertIn("filter-recents", css)
         self.assertIn("MAX_RECENTS = 3", data)
 
     def test_installable_apk_is_present(self):
