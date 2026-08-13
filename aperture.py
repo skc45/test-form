@@ -18,7 +18,6 @@ import posixpath
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import webbrowser
@@ -29,6 +28,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
+CACHE_ENV = "APERTURE_CACHE_DIR"
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -54,6 +54,83 @@ CHROME_CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
 )
+
+
+def cache_home() -> Path:
+    override = os.environ.get(CACHE_ENV)
+    if override:
+        return Path(override)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".cache"
+    return base / "aperture"
+
+
+def session_file() -> Path:
+    return cache_home() / "session.json"
+
+
+def chrome_profile_dir() -> Path:
+    path = cache_home() / "chrome-profile"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def load_disk_session() -> dict:
+    path = session_file()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_disk_session(update: dict) -> dict:
+    home = cache_home()
+    home.mkdir(parents=True, exist_ok=True)
+    payload = {**load_disk_session(), **update, "updatedAt": datetime.now().isoformat(timespec="seconds")}
+    folder = payload.get("lastFolder")
+    if folder:
+        recents = [folder, *[item for item in payload.get("recents") or [] if item != folder]]
+        payload["recents"] = recents[:8]
+    tmp = home / "session.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(session_file())
+    return payload
+
+
+def clear_disk_session() -> None:
+    path = session_file()
+    if path.is_file():
+        path.unlink()
+
+
+def remember_folder(folder: Path, photo_count: int | None = None) -> dict:
+    payload = {
+        "source": "folder",
+        "lastFolder": str(folder),
+        "lastFolderName": folder.name,
+    }
+    if photo_count is not None:
+        payload["photoCount"] = photo_count
+    return save_disk_session(payload)
+
+
+def resolve_startup_folder(requested: Path | None) -> Path | None:
+    if requested:
+        folder = requested.expanduser().resolve()
+        if not folder.is_dir():
+            return folder
+        remember_folder(folder)
+        return folder
+    last = load_disk_session().get("lastFolder")
+    if not last:
+        return None
+    folder = Path(last).expanduser()
+    if folder.is_dir():
+        return folder.resolve()
+    return None
 
 
 def slug(value: str) -> str:
@@ -119,14 +196,23 @@ class ApertureHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/catalog":
+            photos = scan_folder(self.folder) if self.folder else []
+            session = load_disk_session()
             self._send_json(
                 {
                     "folder": self.folder.name if self.folder else "",
                     "path": str(self.folder) if self.folder else "",
                     "app": self.app_mode,
-                    "photos": scan_folder(self.folder) if self.folder else [],
+                    "cached": bool(session.get("lastFolder")),
+                    "photos": photos,
                 }
             )
+            return
+        if parsed.path == "/api/cache":
+            session = load_disk_session()
+            last = session.get("lastFolder")
+            exists = bool(last and Path(last).expanduser().is_dir())
+            self._send_json({**session, "exists": exists})
             return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
@@ -160,6 +246,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/cache":
+            self.send_error(404, "Not found")
+            return
+        clear_disk_session()
+        self._send_json({"ok": True, "cleared": True})
+
 
 def find_chrome() -> str | None:
     for candidate in CHROME_CANDIDATES:
@@ -176,7 +270,7 @@ def find_chrome() -> str | None:
 def open_gui(url: str) -> subprocess.Popen | None:
     chrome = find_chrome()
     if chrome:
-        profile = tempfile.mkdtemp(prefix="aperture-chrome-")
+        profile = chrome_profile_dir()
         cmd = [
             chrome,
             f"--user-data-dir={profile}",
@@ -226,6 +320,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("folder", nargs="?", help="Image folder to open")
     parser.add_argument("--port", type=int, default=0, help="Port (0 = automatic)")
     parser.add_argument("--no-browser", action="store_true", help="Serve only; do not open a window")
+    parser.add_argument("--forget", action="store_true", help="Clear the cached last folder and exit")
     parser.add_argument("--install-launcher", action="store_true", help="Install a desktop menu entry")
     return parser.parse_args(argv)
 
@@ -244,11 +339,16 @@ def main(argv: list[str] | None = None) -> int:
         path = install_launcher()
         print(f"Installed launcher: {path}")
         return 0
+    if args.forget:
+        clear_disk_session()
+        print(f"Cleared cache {session_file()}")
+        return 0
 
-    folder = Path(args.folder).expanduser().resolve() if args.folder else None
-    if folder and not folder.is_dir():
-        print(f"Not a folder: {folder}", file=sys.stderr)
+    requested = Path(args.folder).expanduser().resolve() if args.folder else None
+    if requested and not requested.is_dir():
+        print(f"Not a folder: {requested}", file=sys.stderr)
         return 2
+    folder = resolve_startup_folder(requested)
 
     server = run_server(folder, args.port)
     host, bound = server.server_address
@@ -256,7 +356,9 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://{host}:{bound}/?{query}"
     print(f"Aperture {url}")
     if folder:
-        print(f"Folder {folder} ({len(scan_folder(folder))} images)")
+        count = len(scan_folder(folder))
+        remember_folder(folder, count)
+        print(f"Folder {folder} ({count} images)")
 
     proc = None
     if not args.no_browser:

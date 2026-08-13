@@ -76,7 +76,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint">Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts</p>
+            <p class="hint" id="catalogHint">Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <p class="empty" id="empty" hidden>No plates match that search.</p>
@@ -149,8 +149,17 @@
         <p class="help-kicker">Aperture</p>
         <h2>Open a folder</h2>
         <p class="opener-copy">
-          Choose a directory of photographs. Subfolders become catalog filters. You can also drop a folder onto this window.
+          Choose a directory of photographs. Subfolders become catalog filters. The last folder is kept in local cache and restored the next time you open Aperture.
         </p>
+        <div class="cache-card" id="cacheCard" hidden>
+          <p class="help-kicker">Last folder</p>
+          <p class="cache-name" id="cacheName"></p>
+          <p class="cache-meta" id="cacheMeta"></p>
+          <div class="opener-actions">
+            <button class="text-btn opener-primary" id="reopenBtn" type="button">Reopen folder</button>
+            <button class="text-btn" id="forgetBtn" type="button">Forget</button>
+          </div>
+        </div>
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="openerFolderBtn" type="button">Choose folder</button>
           <button class="text-btn" id="demoBtn" type="button">View demo catalog</button>

@@ -1,4 +1,5 @@
 import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
+import * as cache from "./data.js";
 
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|svg)$/i;
 
@@ -7,6 +8,8 @@ const state = {
   categories: DEMO_CATEGORIES,
   source: "demo",
   folderName: "",
+  folderPath: "",
+  folderHandle: null,
   filter: "all",
   query: "",
   layout: "masonry",
@@ -47,6 +50,10 @@ const els = {
   filmstrip: document.getElementById("filmstrip"),
   help: document.getElementById("help"),
   opener: document.getElementById("opener"),
+  cacheCard: document.getElementById("cacheCard"),
+  cacheName: document.getElementById("cacheName"),
+  cacheMeta: document.getElementById("cacheMeta"),
+  catalogHint: document.getElementById("catalogHint"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -280,12 +287,15 @@ function pulseChrome() {
   chromeTimer = window.setTimeout(() => els.viewer.classList.remove("show-chrome"), 2200);
 }
 
-function setCatalog(photos, { folderName = "", source = "folder" } = {}) {
+function setCatalog(photos, { folderName = "", folderPath = "", source = "folder", handle = null } = {}) {
   if (state.open) closeViewer();
   state.photos = photos.map((photo, index) => ({ ...photo, index }));
   state.categories = source === "demo" ? DEMO_CATEGORIES : categoriesFrom(state.photos);
   state.source = source;
   state.folderName = folderName;
+  state.folderPath = folderPath;
+  if (handle) state.folderHandle = handle;
+  if (source !== "folder") state.folderHandle = null;
   state.filter = "all";
   state.query = "";
   els.search.value = "";
@@ -294,6 +304,41 @@ function setCatalog(photos, { folderName = "", source = "folder" } = {}) {
   renderFilters();
   renderHero();
   renderCatalog();
+  persistCatalog();
+}
+
+function persistCatalog() {
+  const hint = els.catalogHint;
+  if (state.source === "folder" && state.folderName) {
+    if (hint) {
+      hint.innerHTML = `Cached folder · ${escapeHtml(state.folderName)} · <kbd>O</kbd> change · <kbd>?</kbd> shortcuts`;
+    }
+    cache.saveSession({
+      source: "folder",
+      folderName: state.folderName,
+      folderPath: state.folderPath,
+      photoCount: state.photos.length,
+      layout: state.layout,
+      filter: state.filter,
+      openedAt: new Date().toISOString(),
+    });
+    cache.saveCatalogIndex(state.photos);
+    if (state.folderHandle) {
+      cache.saveFolderHandle(state.folderHandle, { name: state.folderName, path: state.folderPath });
+    }
+    return;
+  }
+  if (hint) {
+    hint.innerHTML = "Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts";
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function photoFromFile(file, relPath, folderName) {
@@ -377,25 +422,109 @@ async function walkEntry(entry, photos, folderName, prefix = "") {
   }
 }
 
+async function openDirectoryHandle(handle) {
+  revokeBlobs();
+  const photos = [];
+  await walkDirectoryHandle(handle, photos, handle.name);
+  if (photos.length) photos[0].featured = true;
+  state.folderHandle = handle;
+  setCatalog(photos, { folderName: handle.name, source: "folder", handle });
+  return photos.length;
+}
+
 async function openFolderPicker() {
   if (window.showDirectoryPicker) {
     try {
       const dir = await window.showDirectoryPicker({ mode: "read" });
-      revokeBlobs();
-      const photos = [];
-      await walkDirectoryHandle(dir, photos, dir.name);
-      if (!photos.length) {
-        setCatalog([], { folderName: dir.name, source: "folder" });
-        return;
-      }
-      photos[0].featured = true;
-      setCatalog(photos, { folderName: dir.name, source: "folder" });
+      await openDirectoryHandle(dir);
       return;
     } catch (error) {
       if (error?.name === "AbortError") return;
     }
   }
   els.folderInput.click();
+}
+
+async function reopenCachedFolder() {
+  const handle = state.folderHandle || (await cache.loadFolderHandle());
+  if (!handle) {
+    els.folderInput.click();
+    return;
+  }
+  const permission = await cache.requestHandlePermission(handle);
+  if (permission !== "granted") {
+    await openFolderPicker();
+    return;
+  }
+  state.folderHandle = handle;
+  await openDirectoryHandle(handle);
+}
+
+function paintCacheCard(session) {
+  const name = session?.folderName || session?.lastFolderName;
+  const hasFolder = Boolean(name && (session.source === "folder" || session.lastFolder));
+  els.cacheCard.hidden = !hasFolder;
+  if (!hasFolder) {
+    document.getElementById("openerFolderBtn").classList.add("opener-primary");
+    return;
+  }
+  document.getElementById("openerFolderBtn").classList.remove("opener-primary");
+  els.cacheName.textContent = name;
+  const when = session.openedAt || session.updatedAt
+    ? new Date(session.openedAt || session.updatedAt).toLocaleString()
+    : "saved locally";
+  const count = session.photoCount ? `${session.photoCount} plate${session.photoCount === 1 ? "" : "s"}` : "catalog";
+  const where = session.folderPath || session.lastFolder ? ` · ${session.folderPath || session.lastFolder}` : "";
+  els.cacheMeta.textContent = `${count} · cached ${when}${where}`;
+}
+
+async function forgetFolder() {
+  await cache.clearCache();
+  try {
+    await fetch("/api/cache", { method: "DELETE" });
+  } catch {
+    /* static hosts have no cache API */
+  }
+  state.folderHandle = null;
+  state.folderPath = "";
+  paintCacheCard(cache.emptySession());
+  restoreDemo();
+}
+
+async function restoreCachedFolder() {
+  let session = await cache.loadSession();
+  try {
+    const response = await fetch("/api/cache", { headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const disk = await response.json();
+      if (disk.lastFolder || disk.lastFolderName) {
+        session = {
+          ...session,
+          source: "folder",
+          folderName: session.folderName || disk.lastFolderName || "",
+          folderPath: session.folderPath || disk.lastFolder || "",
+          photoCount: session.photoCount || disk.photoCount || 0,
+          openedAt: session.openedAt || disk.updatedAt || "",
+        };
+      }
+    }
+  } catch {
+    /* static hosts have no cache API */
+  }
+  if (session.layout === "grid" || session.layout === "masonry") {
+    state.layout = session.layout;
+  }
+  const handle = await cache.loadFolderHandle();
+  if (handle) {
+    state.folderHandle = handle;
+    const permission = await cache.queryHandlePermission(handle);
+    if (permission === "granted") {
+      await openDirectoryHandle(handle);
+      return true;
+    }
+  }
+  paintCacheCard(session);
+  return false;
 }
 
 function showOpener() {
@@ -418,7 +547,11 @@ async function loadFromApi() {
     const data = await response.json();
     if (!data || !Array.isArray(data.photos)) return false;
     if (!data.photos.length) return false;
-    setCatalog(data.photos, { folderName: data.folder || "", source: "folder" });
+    setCatalog(data.photos, {
+      folderName: data.folder || "",
+      folderPath: data.path || "",
+      source: "folder",
+    });
     return true;
   } catch {
     return false;
@@ -507,13 +640,16 @@ async function wire() {
   const params = new URLSearchParams(location.search);
   const appMode = params.get("mode") === "app";
   const fromApi = await loadFromApi();
+  const fromCache = fromApi ? false : await restoreCachedFolder();
 
-  if (!fromApi) {
+  if (!fromApi && !fromCache) {
     renderFilters();
     renderHero();
     renderCatalog();
+    paintCacheCard(await cache.loadSession());
   }
-  if (appMode && !fromApi) showOpener();
+  if (appMode && !fromApi && !fromCache) showOpener();
+  else if (!fromApi && !fromCache && (await cache.loadSession()).source === "folder") showOpener();
 
   els.filters.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-filter]");
@@ -521,6 +657,7 @@ async function wire() {
     state.filter = btn.dataset.filter;
     renderFilters();
     renderCatalog();
+    persistCatalog();
   });
 
   els.search.addEventListener("input", () => {
@@ -531,10 +668,13 @@ async function wire() {
   els.layoutBtn.addEventListener("click", () => {
     state.layout = state.layout === "masonry" ? "grid" : "masonry";
     renderCatalog();
+    persistCatalog();
   });
 
   els.folderBtn.addEventListener("click", openFolderPicker);
   document.getElementById("openerFolderBtn").addEventListener("click", openFolderPicker);
+  document.getElementById("reopenBtn").addEventListener("click", reopenCachedFolder);
+  document.getElementById("forgetBtn").addEventListener("click", forgetFolder);
   document.getElementById("demoBtn").addEventListener("click", restoreDemo);
   els.folderInput.addEventListener("change", () => {
     loadFiles(els.folderInput.files, { folderName: guessFolderName(els.folderInput.files) });

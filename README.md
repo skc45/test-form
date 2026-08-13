@@ -11,12 +11,18 @@ chmod +x aperture aperture.py
 ./aperture
 ```
 
-A GUI window opens. Choose a folder of photographs, or drop a folder onto the window. Subfolders become catalog filters.
+A GUI window opens. Choose a folder of photographs, or drop a folder onto the window. Subfolders become catalog filters. The last folder is stored in local cache and reopened automatically next time.
 
 Open a folder directly:
 
 ```bash
 ./aperture ~/Pictures
+```
+
+Clear the cached folder:
+
+```bash
+./aperture --forget
 ```
 
 Install a desktop menu entry (Linux) so Aperture appears in your app launcher and can open folders from the file manager:
@@ -39,6 +45,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 
 - Full-screen catalog with a featured hero plate and a masonry or uniform grid
 - Native folder picker, drag-and-drop folders, and local file upload
+- Local cache remembers the last folder (IndexedDB + `~/.cache/aperture/session.json`) and restores it on the next launch
 - Category filters from subfolders, plus search
 - Full-screen viewer with fit/fill, zoom, pan, slideshow, and a filmstrip
 - Deep links: `#photo/solstice` opens that demo plate directly

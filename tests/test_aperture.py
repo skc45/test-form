@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from http.client import HTTPConnection
@@ -83,6 +84,78 @@ class ServerTests(unittest.TestCase):
         status, ctype, body = self._get("/")
         self.assertEqual(status, 200)
         self.assertIn(b"Open folder", body)
+
+
+class CacheTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache_dir = Path(self.tmp.name) / "cache"
+        self.photos = Path(self.tmp.name) / "photos"
+        self.photos.mkdir()
+        (self.photos / "keep.png").write_bytes(TINY_PNG)
+        self.old = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(self.cache_dir)
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old
+        self.tmp.cleanup()
+
+    def test_remembers_and_restores_last_folder(self):
+        app.remember_folder(self.photos, 1)
+        session = app.load_disk_session()
+        self.assertEqual(session["lastFolder"], str(self.photos))
+        self.assertEqual(session["lastFolderName"], self.photos.name)
+        self.assertEqual(session["photoCount"], 1)
+        restored = app.resolve_startup_folder(None)
+        self.assertEqual(restored, self.photos.resolve())
+
+    def test_recents_keep_latest_first(self):
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        app.remember_folder(self.photos)
+        app.remember_folder(other)
+        recents = app.load_disk_session()["recents"]
+        self.assertEqual(recents[0], str(other))
+        self.assertIn(str(self.photos), recents)
+
+    def test_missing_cached_folder_is_ignored(self):
+        missing = Path(self.tmp.name) / "gone"
+        app.save_disk_session({"lastFolder": str(missing), "lastFolderName": "gone", "source": "folder"})
+        self.assertIsNone(app.resolve_startup_folder(None))
+
+    def test_forget_clears_session(self):
+        app.remember_folder(self.photos)
+        app.clear_disk_session()
+        self.assertEqual(app.load_disk_session(), {})
+
+    def test_cache_http_endpoints(self):
+        app.remember_folder(self.photos, 1)
+        server = app.run_server(self.photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/cache")
+            response = conn.getresponse()
+            payload = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(payload["exists"])
+            self.assertEqual(payload["lastFolderName"], self.photos.name)
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("DELETE", "/api/cache")
+            response = conn.getresponse()
+            body = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(body["cleared"])
+            self.assertEqual(app.load_disk_session(), {})
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

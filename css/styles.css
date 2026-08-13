@@ -744,6 +744,36 @@ kbd {
   background: var(--gold-2);
 }
 
+.cache-card {
+  text-align: left;
+  margin: 0 0 1.3rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(243, 239, 230, 0.04);
+}
+
+.cache-card .opener-actions {
+  justify-content: flex-start;
+  margin-top: 0.85rem;
+}
+
+.cache-name {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.35rem;
+  margin: 0.15rem 0 0.2rem;
+}
+
+.cache-meta,
+.cache-status {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.cache-card[hidden] {
+  display: none;
+}
+
 .app.is-drag {
   outline: 2px dashed var(--gold);
   outline-offset: -10px;
