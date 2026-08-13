@@ -680,9 +680,79 @@ kbd {
   margin-bottom: 1rem;
 }
 
+.folder-btn {
+  white-space: nowrap;
+}
+
+.opener {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(201, 165, 106, 0.12), transparent 55%),
+    rgba(7, 7, 8, 0.88);
+  backdrop-filter: blur(16px);
+}
+
+.opener[hidden] {
+  display: none;
+}
+
+.opener-card {
+  width: min(520px, calc(100vw - 2rem));
+  text-align: center;
+  padding: 2.2rem 1.8rem;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow);
+}
+
+.opener-card h2 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  font-weight: 320;
+  letter-spacing: -0.03em;
+  margin: 0.35rem 0 0.8rem;
+}
+
+.opener-copy {
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+
+.opener-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.opener-primary {
+  background: var(--gold);
+  color: #1a140c;
+  border-color: var(--gold);
+  font-weight: 500;
+}
+
+.opener-primary:hover {
+  color: #1a140c;
+  border-color: var(--gold-2);
+  background: var(--gold-2);
+}
+
 .app.is-drag {
   outline: 2px dashed var(--gold);
   outline-offset: -10px;
+}
+
+.app.is-drag .opener,
+.opener.is-drag {
+  outline: 2px dashed var(--gold);
+  outline-offset: -14px;
 }
 
 @keyframes spin {

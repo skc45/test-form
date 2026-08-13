@@ -1,7 +1,12 @@
-import { CATEGORIES, PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
+import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
+
+const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|svg)$/i;
 
 const state = {
-  photos: [...PHOTOS],
+  photos: [...DEMO_PHOTOS],
+  categories: DEMO_CATEGORIES,
+  source: "demo",
+  folderName: "",
   filter: "all",
   query: "",
   layout: "masonry",
@@ -14,6 +19,7 @@ const state = {
   slideshow: false,
   dragging: false,
   pointer: { x: 0, y: 0 },
+  blobUrls: [],
 };
 
 const els = {
@@ -24,6 +30,9 @@ const els = {
   search: document.getElementById("search"),
   layoutBtn: document.getElementById("layoutBtn"),
   fileInput: document.getElementById("fileInput"),
+  folderInput: document.getElementById("folderInput"),
+  folderBtn: document.getElementById("folderBtn"),
+  hero: document.getElementById("hero"),
   heroBtn: document.getElementById("heroBtn"),
   heroImg: document.getElementById("heroImg"),
   heroTitle: document.getElementById("heroTitle"),
@@ -37,12 +46,51 @@ const els = {
   counter: document.getElementById("counter"),
   filmstrip: document.getElementById("filmstrip"),
   help: document.getElementById("help"),
+  opener: document.getElementById("opener"),
   app: document.getElementById("app"),
+  brandKicker: document.querySelector(".brand-kicker"),
 };
 
 let slideTimer = 0;
 let chromeTimer = 0;
 let swipe = { x: 0, t: 0 };
+
+function slug(value) {
+  return String(value || "folder")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "folder";
+}
+
+function labelize(value) {
+  return String(value || "Folder")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function photoMeta(photo) {
+  return [photo.photographer, photo.location, photo.year].filter(Boolean).join(" · ");
+}
+
+function isImageName(name) {
+  return IMAGE_RE.test(name || "");
+}
+
+function categoriesFrom(photos) {
+  const seen = [];
+  for (const photo of photos) {
+    if (!seen.some((cat) => cat.id === photo.category)) {
+      seen.push({ id: photo.category, label: labelize(photo.category) });
+    }
+  }
+  return [{ id: "all", label: "All plates" }, ...seen];
+}
+
+function revokeBlobs() {
+  for (const url of state.blobUrls) URL.revokeObjectURL(url);
+  state.blobUrls = [];
+}
 
 function visiblePhotos() {
   const q = state.query.trim().toLowerCase();
@@ -60,11 +108,11 @@ function visiblePhotos() {
 function bindImage(img, photo, size = "thumb") {
   const src = size === "hero" ? photo.hero || photo.src : size === "full" ? photo.src : photo.thumb;
   img.src = src;
-  img.alt = `${photo.title} — ${photo.location}`;
+  img.alt = `${photo.title}${photo.location ? ` — ${photo.location}` : ""}`;
   img.addEventListener(
     "error",
     () => {
-      img.src = fallbackSrc(photo.id);
+      if (!photo.local) img.src = fallbackSrc(photo.id);
     },
     { once: true }
   );
@@ -73,28 +121,40 @@ function bindImage(img, photo, size = "thumb") {
 }
 
 function renderFilters() {
-  els.filters.innerHTML = CATEGORIES.map(
-    (cat) => `
+  els.filters.innerHTML = state.categories
+    .map(
+      (cat) => `
       <button class="filter" type="button" data-filter="${cat.id}" aria-pressed="${
         state.filter === cat.id
       }">${cat.label}</button>`
-  ).join("");
+    )
+    .join("");
 }
 
 function renderHero() {
   const featured = state.photos.find((p) => p.featured) || state.photos[0];
-  if (!featured) return;
+  if (!featured) {
+    els.hero.hidden = true;
+    return;
+  }
+  els.hero.hidden = false;
   bindImage(els.heroImg, featured, "hero");
   els.heroTitle.textContent = featured.title;
-  els.heroMeta.textContent = `${featured.photographer} · ${featured.location} · ${featured.year}`;
+  els.heroMeta.textContent = photoMeta(featured);
   els.heroIndex.textContent = `Plate ${plateNumber(featured.index)}`;
   els.heroBtn.onclick = () => openViewer(featured.id);
 }
 
 function renderCatalog() {
   const photos = visiblePhotos();
-  els.count.textContent = `${photos.length} plate${photos.length === 1 ? "" : "s"}`;
+  const noun = photos.length === 1 ? "plate" : "plates";
+  els.count.textContent = state.folderName
+    ? `${photos.length} ${noun} · ${state.folderName}`
+    : `${photos.length} ${noun}`;
   els.empty.hidden = photos.length > 0;
+  els.empty.textContent = state.query
+    ? "No plates match that search."
+    : "No images in this folder.";
   els.catalog.classList.toggle("grid", state.layout === "grid");
   els.catalog.classList.toggle("masonry", state.layout === "masonry");
   els.catalog.innerHTML = photos
@@ -105,7 +165,7 @@ function renderCatalog() {
         <img alt="" />
         <span class="card-meta">
           <strong>${photo.title}</strong>
-          <span>${photo.location}</span>
+          <span>${photo.location || photo.category}</span>
         </span>
       </button>`
     )
@@ -157,7 +217,7 @@ function showIndex(index) {
   els.viewer.classList.add("is-loading", "show-chrome");
   resetView();
   els.viewerTitle.textContent = photo.title;
-  els.viewerMeta.textContent = `${photo.photographer} · ${photo.location} · ${photo.year}`;
+  els.viewerMeta.textContent = photoMeta(photo);
   els.viewerKicker.textContent = `Plate ${plateNumber(photo.index)} · ${photo.category}`;
   els.counter.textContent = `${state.activeIndex + 1} / ${photos.length}`;
   els.viewerImage.classList.remove("is-ready");
@@ -168,7 +228,7 @@ function showIndex(index) {
     { once: true }
   );
   if (els.viewerImage.complete) els.viewer.classList.remove("is-loading");
-  history.replaceState(null, "", `#photo/${photo.id}`);
+  history.replaceState(null, "", `#photo/${encodeURIComponent(photo.id)}`);
   renderFilmstrip(photos);
   pulseChrome();
 }
@@ -188,7 +248,7 @@ function closeViewer() {
   stopSlideshow();
   els.viewer.classList.remove("is-open");
   document.body.style.overflow = "";
-  history.replaceState(null, "", location.pathname);
+  history.replaceState(null, "", `${location.pathname}${location.search}`);
   setTimeout(() => {
     if (!state.open) els.viewer.hidden = true;
   }, 280);
@@ -220,30 +280,149 @@ function pulseChrome() {
   chromeTimer = window.setTimeout(() => els.viewer.classList.remove("show-chrome"), 2200);
 }
 
-function addFiles(files) {
-  [...files]
-    .filter((file) => file.type.startsWith("image/"))
-    .forEach((file) => {
-      const url = URL.createObjectURL(file);
-      const photo = {
-        id: `local-${crypto.randomUUID()}`,
-        title: file.name.replace(/\.[^.]+$/, ""),
-        photographer: "You",
-        location: "Local file",
-        year: new Date().getFullYear(),
-        category: "yours",
-        src: url,
-        thumb: url,
-        hero: url,
-        index: state.photos.length,
-        local: true,
-      };
-      state.photos.unshift(photo);
-    });
-  state.filter = "yours";
+function setCatalog(photos, { folderName = "", source = "folder" } = {}) {
+  if (state.open) closeViewer();
+  state.photos = photos.map((photo, index) => ({ ...photo, index }));
+  state.categories = source === "demo" ? DEMO_CATEGORIES : categoriesFrom(state.photos);
+  state.source = source;
+  state.folderName = folderName;
+  state.filter = "all";
+  state.query = "";
+  els.search.value = "";
+  els.brandKicker.textContent = folderName || "Vol. I · Photographica";
+  hideOpener();
   renderFilters();
-  renderCatalog();
   renderHero();
+  renderCatalog();
+}
+
+function photoFromFile(file, relPath, folderName) {
+  const url = URL.createObjectURL(file);
+  state.blobUrls.push(url);
+  const parts = (relPath || file.name).split("/").filter(Boolean);
+  const parent = parts.length > 1 ? parts[parts.length - 2] : folderName || "folder";
+  const location = parts.length > 1 ? parts.slice(0, -1).join("/") : folderName || "Local file";
+  return {
+    id: `local-${state.blobUrls.length}-${file.name}`,
+    title: file.name.replace(/\.[^.]+$/, ""),
+    photographer: folderName || "Folder",
+    location,
+    year: file.lastModified ? new Date(file.lastModified).getFullYear() : new Date().getFullYear(),
+    category: slug(parent),
+    src: url,
+    thumb: url,
+    hero: url,
+    local: true,
+  };
+}
+
+function loadFiles(files, { append = false, folderName = "" } = {}) {
+  const images = [...files].filter((file) => isImageName(file.name) || file.type.startsWith("image/"));
+  if (!images.length) {
+    els.empty.hidden = false;
+    els.empty.textContent = "No images in this folder.";
+    return;
+  }
+  if (!append) revokeBlobs();
+  const photos = images.map((file) => photoFromFile(file, file.webkitRelativePath, folderName));
+  const name = folderName || guessFolderName(images) || "Folder";
+  if (append) {
+    setCatalog([...photos, ...state.photos], { folderName: name, source: "folder" });
+  } else {
+    photos[0].featured = true;
+    setCatalog(photos, { folderName: name, source: "folder" });
+  }
+}
+
+function guessFolderName(files) {
+  const rel = files.find((file) => file.webkitRelativePath)?.webkitRelativePath;
+  if (!rel) return "";
+  return rel.split("/")[0] || "";
+}
+
+function addFiles(files) {
+  loadFiles(files, { append: true, folderName: state.folderName || "Yours" });
+}
+
+async function walkDirectoryHandle(handle, photos, folderName, prefix = "") {
+  for await (const [name, child] of handle.entries()) {
+    const rel = prefix ? `${prefix}/${name}` : name;
+    if (child.kind === "directory") {
+      await walkDirectoryHandle(child, photos, folderName, rel);
+    } else if (isImageName(name)) {
+      const file = await child.getFile();
+      photos.push(photoFromFile(file, rel, folderName));
+    }
+  }
+}
+
+async function walkEntry(entry, photos, folderName, prefix = "") {
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    if (isImageName(entry.name) || file.type.startsWith("image/")) {
+      photos.push(photoFromFile(file, prefix ? `${prefix}/${entry.name}` : entry.name, folderName));
+    }
+    return;
+  }
+  const reader = entry.createReader();
+  const readBatch = () =>
+    new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+  let batch = await readBatch();
+  while (batch.length) {
+    for (const child of batch) {
+      const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      await walkEntry(child, photos, folderName, nextPrefix);
+    }
+    batch = await readBatch();
+  }
+}
+
+async function openFolderPicker() {
+  if (window.showDirectoryPicker) {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: "read" });
+      revokeBlobs();
+      const photos = [];
+      await walkDirectoryHandle(dir, photos, dir.name);
+      if (!photos.length) {
+        setCatalog([], { folderName: dir.name, source: "folder" });
+        return;
+      }
+      photos[0].featured = true;
+      setCatalog(photos, { folderName: dir.name, source: "folder" });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  els.folderInput.click();
+}
+
+function showOpener() {
+  els.opener.hidden = false;
+}
+
+function hideOpener() {
+  els.opener.hidden = true;
+}
+
+function restoreDemo() {
+  revokeBlobs();
+  setCatalog(DEMO_PHOTOS.map((photo) => ({ ...photo })), { source: "demo" });
+}
+
+async function loadFromApi() {
+  try {
+    const response = await fetch("/api/catalog", { headers: { Accept: "application/json" } });
+    if (!response.ok) return false;
+    const data = await response.json();
+    if (!data || !Array.isArray(data.photos)) return false;
+    if (!data.photos.length) return false;
+    setCatalog(data.photos, { folderName: data.folder || "", source: "folder" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function onHash() {
@@ -252,6 +431,12 @@ function onHash() {
 }
 
 function onKey(event) {
+  if (event.key === "o" || event.key === "O") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    openFolderPicker();
+    return;
+  }
   if (event.key === "?" || (event.shiftKey && event.key === "/")) {
     els.help.hidden = !els.help.hidden;
     return;
@@ -259,6 +444,10 @@ function onKey(event) {
   if (event.key === "Escape") {
     if (!els.help.hidden) {
       els.help.hidden = true;
+      return;
+    }
+    if (!els.opener.hidden && state.photos.length) {
+      hideOpener();
       return;
     }
     if (state.open) closeViewer();
@@ -298,10 +487,33 @@ async function toggleFullscreen() {
   else await document.exitFullscreen?.();
 }
 
-function wire() {
-  renderFilters();
-  renderHero();
-  renderCatalog();
+async function ingestDataTransfer(transfer) {
+  const items = [...(transfer.items || [])];
+  const entries = items.map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+  if (entries.length) {
+    revokeBlobs();
+    const photos = [];
+    const rootName = entries.length === 1 ? entries[0].name : "Folder";
+    for (const entry of entries) await walkEntry(entry, photos, rootName);
+    if (!photos.length) return;
+    photos[0].featured = true;
+    setCatalog(photos, { folderName: rootName, source: "folder" });
+    return;
+  }
+  if (transfer.files?.length) loadFiles(transfer.files, { folderName: guessFolderName(transfer.files) });
+}
+
+async function wire() {
+  const params = new URLSearchParams(location.search);
+  const appMode = params.get("mode") === "app";
+  const fromApi = await loadFromApi();
+
+  if (!fromApi) {
+    renderFilters();
+    renderHero();
+    renderCatalog();
+  }
+  if (appMode && !fromApi) showOpener();
 
   els.filters.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-filter]");
@@ -321,6 +533,13 @@ function wire() {
     renderCatalog();
   });
 
+  els.folderBtn.addEventListener("click", openFolderPicker);
+  document.getElementById("openerFolderBtn").addEventListener("click", openFolderPicker);
+  document.getElementById("demoBtn").addEventListener("click", restoreDemo);
+  els.folderInput.addEventListener("change", () => {
+    loadFiles(els.folderInput.files, { folderName: guessFolderName(els.folderInput.files) });
+    els.folderInput.value = "";
+  });
   els.fileInput.addEventListener("change", () => addFiles(els.fileInput.files));
   document.getElementById("closeBtn").addEventListener("click", closeViewer);
   document.getElementById("prevBtn").addEventListener("click", () => next(-1));
@@ -378,13 +597,19 @@ function wire() {
     window.addEventListener(type, (event) => {
       event.preventDefault();
       els.app.classList.add("is-drag");
+      els.opener.classList.add("is-drag");
     });
   });
-  window.addEventListener("dragleave", () => els.app.classList.remove("is-drag"));
+  window.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget) return;
+    els.app.classList.remove("is-drag");
+    els.opener.classList.remove("is-drag");
+  });
   window.addEventListener("drop", (event) => {
     event.preventDefault();
     els.app.classList.remove("is-drag");
-    addFiles(event.dataTransfer.files);
+    els.opener.classList.remove("is-drag");
+    ingestDataTransfer(event.dataTransfer);
   });
 
   window.addEventListener("keydown", onKey);

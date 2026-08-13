@@ -40,6 +40,7 @@
             </svg>
             <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
           </label>
+          <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
           <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <rect x="3" y="3" width="8" height="8" rx="1.5" />
@@ -55,6 +56,7 @@
             </svg>
             <span class="sr-only">Add images</span>
           </label>
+          <input id="folderInput" type="file" accept="image/*" webkitdirectory directory multiple hidden />
         </div>
       </header>
 
@@ -74,7 +76,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint">Click a plate · arrows to browse · <kbd>?</kbd> shortcuts</p>
+            <p class="hint">Open a folder · click a plate · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <p class="empty" id="empty" hidden>No plates match that search.</p>
@@ -134,10 +136,25 @@
           <div><dt>Z / 0</dt><dd>Zoom in / reset</dd></div>
           <div><dt>C</dt><dd>Fit or fill</dd></div>
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
+          <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Drop image files onto the catalog to add them.</p>
+        <p class="help-foot">Open a folder, or drop a folder of images onto the catalog.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
+      </div>
+    </div>
+
+    <div class="opener" id="opener" hidden>
+      <div class="opener-card">
+        <p class="help-kicker">Aperture</p>
+        <h2>Open a folder</h2>
+        <p class="opener-copy">
+          Choose a directory of photographs. Subfolders become catalog filters. You can also drop a folder onto this window.
+        </p>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="openerFolderBtn" type="button">Choose folder</button>
+          <button class="text-btn" id="demoBtn" type="button">View demo catalog</button>
+        </div>
       </div>
     </div>
 
