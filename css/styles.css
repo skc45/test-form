@@ -793,14 +793,14 @@ kbd {
 
 @media (max-width: 1100px) {
   .catalog {
-    column-count: 3;
+    column-count: 2;
   }
 
   .topbar {
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
     height: auto;
-    padding: 0.7rem 0.9rem;
+    padding: env(safe-area-inset-top, 0px) 0.85rem 0;
   }
 
   .filters {
@@ -818,25 +818,34 @@ kbd {
 @media (max-width: 720px) {
   .catalog {
     column-count: 2;
+    column-gap: 0.5rem;
   }
 
   .search input {
-    width: 42vw;
+    width: min(7.5rem, 28vw);
   }
 
   .hint {
     display: none;
   }
 
+  .hero {
+    padding: 0.65rem 0.75rem 0;
+  }
+
+  .catalog-wrap {
+    padding: 1rem 0.75rem 3.5rem;
+  }
+
   .hero-frame {
-    height: 46vh;
+    height: 38vh;
     border-radius: 12px;
   }
 
   .hero-copy {
-    left: 1rem;
-    right: 1rem;
-    bottom: 1rem;
+    left: 0.9rem;
+    right: 0.9rem;
+    bottom: 0.9rem;
   }
 
   .viewer-chrome.top {
@@ -846,6 +855,79 @@ kbd {
   .nav-hit {
     width: 22vw;
   }
+}
+
+/* Galaxy Z Flip cover/inner and other compact phones */
+@media (max-width: 430px) {
+  .hero,
+  .catalog-wrap,
+  .topbar {
+    max-width: 24.5rem;
+    margin-inline: auto;
+    width: 100%;
+  }
+
+  .catalog {
+    column-count: 2;
+    column-gap: 0.4rem;
+  }
+
+  .card {
+    margin-bottom: 0.4rem;
+    border-radius: 10px;
+  }
+
+  .brand-kicker {
+    display: none;
+  }
+
+  .brand h1 {
+    font-size: 1.15rem;
+  }
+
+  .folder-btn {
+    padding: 0.35rem 0.55rem;
+    letter-spacing: 0.1em;
+    font-size: 0.64rem;
+  }
+
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .upload-btn {
+    display: none;
+  }
+
+  .hero-frame {
+    height: 32vh;
+  }
+
+  .hero-copy h2 {
+    font-size: clamp(1.5rem, 8vw, 2.2rem);
+  }
+
+  .opener-card {
+    width: min(360px, calc(100vw - 1.4rem));
+    padding: 1.4rem 1.1rem;
+  }
+}
+
+html.is-native-app .hero,
+html.is-native-app .catalog-wrap {
+  max-width: 24.5rem;
+  margin-inline: auto;
+}
+
+html.is-native-app .catalog {
+  column-count: 2;
+}
+
+html.is-native-app .topbar {
+  max-width: 24.5rem;
+  margin-inline: auto;
+  width: 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {

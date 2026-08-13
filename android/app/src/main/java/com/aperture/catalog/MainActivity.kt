@@ -65,7 +65,8 @@ class MainActivity : AppCompatActivity() {
             settings.allowFileAccess = false
             settings.mediaPlaybackRequiresUserGesture = false
             settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
+            settings.loadWithOverviewMode = false
+            settings.textZoom = 100
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE

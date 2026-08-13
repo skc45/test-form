@@ -645,6 +645,9 @@ async function ingestDataTransfer(transfer) {
 }
 
 async function wire() {
+  if (window.ApertureAndroid) {
+    document.documentElement.classList.add("is-native-app");
+  }
   const params = new URLSearchParams(location.search);
   const appMode = params.get("mode") === "app";
   const fromApi = await loadFromApi();
