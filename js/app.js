@@ -57,12 +57,17 @@ const els = {
   recentTabs: document.getElementById("recentTabs"),
   topbar: document.getElementById("topbar"),
   catalogHint: document.getElementById("catalogHint"),
+  downloadBar: document.getElementById("downloadBar"),
+  downloadCopy: document.getElementById("downloadCopy"),
+  downloadFill: document.getElementById("downloadFill"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
 
 let slideTimer = 0;
 let chromeTimer = 0;
+let downloadTimer = 0;
+let downloadBusy = false;
 let swipe = { x: 0, t: 0 };
 
 function slug(value) {
@@ -304,6 +309,7 @@ function showIndex(index) {
   if (els.viewerImage.complete) els.viewer.classList.remove("is-loading");
   history.replaceState(null, "", `#photo/${encodeURIComponent(photo.id)}`);
   renderFilmstrip(photos);
+  resetDownloadBar();
   pulseChrome();
 }
 
@@ -849,6 +855,11 @@ function onKey(event) {
     event.preventDefault();
     toggleSlideshow();
   }
+  if (event.key === "d" || event.key === "D") {
+    event.preventDefault();
+    downloadCurrent();
+    return;
+  }
   if (event.key === "f" || event.key === "F") toggleFullscreen();
   if (event.key === "c" || event.key === "C") toggleCover();
   if (event.key === "z" || event.key === "Z" || event.key === "+") setZoom(state.zoom + 0.25);
@@ -874,6 +885,142 @@ function toggleCover() {
 async function toggleFullscreen() {
   if (!document.fullscreenElement) await els.viewer.requestFullscreen?.();
   else await document.exitFullscreen?.();
+}
+
+function downloadFilename(photo) {
+  const base = slug(photo.title || photo.id || "plate");
+  const src = String(photo.src || "");
+  const match = src.split("?")[0].match(/\.(jpe?g|png|gif|webp|bmp|tiff?|avif|svg)$/i);
+  return `${base}${match ? match[0].toLowerCase() : ".jpg"}`;
+}
+
+function resetDownloadBar() {
+  window.clearTimeout(downloadTimer);
+  downloadBusy = false;
+  els.downloadBar?.classList.remove("is-busy", "is-done", "is-error");
+  els.downloadBar?.removeAttribute("disabled");
+  if (els.downloadFill) els.downloadFill.style.width = "0%";
+  if (els.downloadCopy) els.downloadCopy.textContent = "Tap to download";
+}
+
+function setDownloadProgress(pct, label) {
+  const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+  els.downloadBar?.classList.toggle("is-busy", clamped > 0 && clamped < 100);
+  els.downloadBar?.classList.toggle("is-done", clamped >= 100);
+  els.downloadBar?.classList.remove("is-error");
+  if (els.downloadFill) els.downloadFill.style.width = `${clamped}%`;
+  if (els.downloadCopy) els.downloadCopy.textContent = label;
+}
+
+function finishDownload(ok, label) {
+  downloadBusy = false;
+  els.downloadBar?.removeAttribute("disabled");
+  if (ok) {
+    setDownloadProgress(100, label || "Saved");
+  } else {
+    els.downloadBar?.classList.remove("is-busy", "is-done");
+    els.downloadBar?.classList.add("is-error");
+    if (els.downloadFill) els.downloadFill.style.width = "100%";
+    if (els.downloadCopy) els.downloadCopy.textContent = label || "Could not download";
+  }
+  downloadTimer = window.setTimeout(() => {
+    if (!downloadBusy) resetDownloadBar();
+  }, 1600);
+}
+
+async function fetchBlobWithProgress(url, onProgress) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("fetch failed");
+  const total = Number(response.headers.get("content-length")) || 0;
+  if (!response.body || !total) {
+    onProgress(55);
+    return response.blob();
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    onProgress(Math.round((received / total) * 100));
+  }
+  return new Blob(chunks);
+}
+
+function blobFromViewer() {
+  const img = els.viewerImage;
+  if (!img?.naturalWidth) return Promise.reject(new Error("no image"));
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return Promise.reject(new Error("no canvas"));
+  ctx.drawImage(img, 0, 0);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))), "image/jpeg", 0.92);
+  });
+}
+
+function triggerSave(blob, filename) {
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(href), 1500);
+}
+
+function nativeDownload(src, filename) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("timeout")), 45000);
+    window.apertureDownloadProgress = (pct) => {
+      if (pct < 0) {
+        window.clearTimeout(timer);
+        reject(new Error("native download failed"));
+        return;
+      }
+      setDownloadProgress(pct, pct >= 100 ? "Saved" : `Downloading… ${pct}%`);
+      if (pct >= 100) {
+        window.clearTimeout(timer);
+        resolve();
+      }
+    };
+    window.ApertureAndroid.download(src, filename);
+  });
+}
+
+async function downloadCurrent() {
+  if (!state.open || downloadBusy) return;
+  const photo = visiblePhotos()[state.activeIndex];
+  if (!photo) return;
+  downloadBusy = true;
+  els.downloadBar?.setAttribute("disabled", "true");
+  const filename = downloadFilename(photo);
+  setDownloadProgress(6, "Downloading…");
+  try {
+    if (window.ApertureAndroid?.download) {
+      await nativeDownload(photo.src, filename);
+      finishDownload(true, "Saved");
+      return;
+    }
+    let blob;
+    try {
+      blob = await fetchBlobWithProgress(photo.src, (pct) => {
+        setDownloadProgress(Math.max(8, pct), `Downloading… ${pct}%`);
+      });
+    } catch {
+      setDownloadProgress(70, "Downloading…");
+      blob = await blobFromViewer();
+    }
+    triggerSave(blob, filename);
+    finishDownload(true, "Saved");
+  } catch {
+    finishDownload(false, "Could not download");
+  }
 }
 
 async function ingestDataTransfer(transfer) {
@@ -957,6 +1104,8 @@ async function wire() {
   document.getElementById("zoomInBtn").addEventListener("click", () => setZoom(state.zoom + 0.25));
   document.getElementById("zoomOutBtn").addEventListener("click", () => setZoom(state.zoom - 0.25));
   document.getElementById("fullBtn").addEventListener("click", toggleFullscreen);
+  document.getElementById("downloadBtn").addEventListener("click", downloadCurrent);
+  els.downloadBar?.addEventListener("click", downloadCurrent);
   document.getElementById("helpClose").addEventListener("click", () => {
     els.help.hidden = true;
   });

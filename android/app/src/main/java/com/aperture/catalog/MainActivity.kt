@@ -1,8 +1,11 @@
 package com.aperture.catalog
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -24,6 +27,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var store: CatalogStore
     private lateinit var assetLoader: WebViewAssetLoader
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingDownload: Pair<String, String>? = null
+
+    private val requestWrite = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val pending = pendingDownload
+        pendingDownload = null
+        if (granted && pending != null) startDownload(pending.first, pending.second)
+        else notifyDownload(-1)
+    }
 
     private val pickFolder = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
@@ -168,6 +181,41 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun isNative(): Boolean = true
+
+        @JavascriptInterface
+        fun download(url: String, filename: String) {
+            runOnUiThread {
+                if (Build.VERSION.SDK_INT < 29 &&
+                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingDownload = url to filename
+                    requestWrite.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    return@runOnUiThread
+                }
+                startDownload(url, filename)
+            }
+        }
+    }
+
+    private fun startDownload(url: String, filename: String) {
+        notifyDownload(4)
+        Thread {
+            val ok = try {
+                store.download(url, filename) { pct -> notifyDownload(pct) }
+            } catch (_: Exception) {
+                false
+            }
+            notifyDownload(if (ok) 100 else -1)
+        }.start()
+    }
+
+    private fun notifyDownload(pct: Int) {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "window.apertureDownloadProgress && window.apertureDownloadProgress($pct)",
+                null,
+            )
+        }
     }
 
     override fun onDestroy() {

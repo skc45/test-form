@@ -118,6 +118,11 @@
           <button class="icon-btn" id="slideBtn" type="button" aria-label="Slideshow" title="Slideshow">
             <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
           </button>
+          <button class="icon-btn" id="downloadBtn" type="button" aria-label="Download plate" title="Download">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v12M7 11l5 5 5-5M5 20h14" />
+            </svg>
+          </button>
           <button class="icon-btn" id="fullBtn" type="button" aria-label="Browser fullscreen" title="Fullscreen">
             <svg viewBox="0 0 24 24">
               <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
@@ -127,6 +132,10 @@
       </div>
 
       <div class="filmstrip" id="filmstrip" role="listbox" aria-label="Catalog filmstrip"></div>
+      <button class="download-bar" id="downloadBar" type="button" aria-label="Download this plate">
+        <span class="download-copy" id="downloadCopy">Tap to download</span>
+        <span class="download-track" aria-hidden="true"><span class="download-fill" id="downloadFill"></span></span>
+      </button>
     </div>
 
     <div class="help" id="help" hidden>
@@ -140,6 +149,7 @@
           <div><dt>Z / 0</dt><dd>Zoom in / reset</dd></div>
           <div><dt>C</dt><dd>Fit or fill</dd></div>
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
+          <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>

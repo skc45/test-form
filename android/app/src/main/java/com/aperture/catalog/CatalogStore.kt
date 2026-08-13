@@ -1,14 +1,22 @@
 package com.aperture.catalog
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.webkit.WebResourceResponse
 import androidx.documentfile.provider.DocumentFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.Calendar
 import java.util.Locale
@@ -144,12 +152,18 @@ class CatalogStore(private val context: Context) {
         val key = listOf(rel, Uri.decode(rel)).firstOrNull { media.containsKey(it) }
         val entry = key?.let { media[it] } ?: return notFound()
         val stream = context.contentResolver.openInputStream(entry.first) ?: return notFound()
+        val headers = mutableMapOf(
+            "Cache-Control" to "public, max-age=60",
+        )
+        context.contentResolver.openAssetFileDescriptor(entry.first, "r")?.use { afd ->
+            if (afd.length >= 0) headers["Content-Length"] = afd.length.toString()
+        }
         return WebResourceResponse(
             entry.second,
             null,
             200,
             "OK",
-            mapOf("Cache-Control" to "public, max-age=60"),
+            headers,
             stream,
         )
     }
@@ -316,6 +330,122 @@ class CatalogStore(private val context: Context) {
             emptyMap(),
             ByteArrayInputStream(ByteArray(0)),
         )
+    }
+
+    fun download(url: String, filename: String, onProgress: (Int) -> Unit): Boolean {
+        onProgress(4)
+        val rel = mediaRelFrom(url)
+        if (rel != null) {
+            val key = listOf(rel, Uri.decode(rel)).firstOrNull { media.containsKey(it) }
+            if (key != null) {
+                val entry = media[key] ?: return false
+                return saveUri(entry.first, filename, entry.second, onProgress)
+            }
+        }
+        return saveHttp(url, filename, onProgress)
+    }
+
+    private fun mediaRelFrom(url: String): String? {
+        val marker = "/media/"
+        val index = url.indexOf(marker)
+        if (index < 0) return null
+        return Uri.decode(url.substring(index + marker.length).substringBefore("?"))
+    }
+
+    private fun saveUri(uri: Uri, filename: String, mime: String, onProgress: (Int) -> Unit): Boolean {
+        val total = context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        val input = context.contentResolver.openInputStream(uri) ?: return false
+        return input.use { saveStream(it, filename, mime, total, onProgress) }
+    }
+
+    private fun saveHttp(url: String, filename: String, onProgress: (Int) -> Unit): Boolean {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 15000
+        connection.readTimeout = 30000
+        connection.connect()
+        val code = connection.responseCode
+        if (code !in 200..299) {
+            connection.disconnect()
+            return false
+        }
+        val mime = connection.contentType?.substringBefore(";")?.trim().orEmpty().ifBlank { mimeFor(filename) }
+        val total = connection.contentLengthLong
+        return try {
+            connection.inputStream.use { saveStream(it, filename, mime, total, onProgress) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun saveStream(
+        input: InputStream,
+        filename: String,
+        mime: String,
+        total: Long,
+        onProgress: (Int) -> Unit,
+    ): Boolean {
+        val name = safeDownloadName(filename, mime)
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, mime.ifBlank { mimeFor(name) })
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Aperture")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+        }
+        val resolver = context.contentResolver
+        val dest = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+        return try {
+            resolver.openOutputStream(dest)?.use { output ->
+                copyWithProgress(input, output, total, onProgress)
+            } ?: return false
+            if (Build.VERSION.SDK_INT >= 29) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(dest, values, null, null)
+            }
+            onProgress(100)
+            true
+        } catch (_: Exception) {
+            resolver.delete(dest, null, null)
+            false
+        }
+    }
+
+    private fun copyWithProgress(input: InputStream, output: OutputStream, total: Long, onProgress: (Int) -> Unit) {
+        val buffer = ByteArray(16 * 1024)
+        var copied = 0L
+        var last = -1
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            output.write(buffer, 0, read)
+            copied += read
+            val pct = if (total > 0) {
+                ((copied * 99) / total).toInt().coerceIn(1, 99)
+            } else {
+                (8 + ((copied / 40_000L) % 80)).toInt()
+            }
+            if (pct != last) {
+                last = pct
+                onProgress(pct)
+            }
+        }
+        output.flush()
+    }
+
+    private fun safeDownloadName(filename: String, mime: String): String {
+        val base = filename.substringAfterLast('/').substringAfterLast('\\').ifBlank { "plate" }
+        val cleaned = base.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+        if (cleaned.contains('.')) return cleaned
+        val ext = when {
+            mime.contains("png") -> ".png"
+            mime.contains("webp") -> ".webp"
+            mime.contains("gif") -> ".gif"
+            else -> ".jpg"
+        }
+        return cleaned + ext
     }
 
     companion object {

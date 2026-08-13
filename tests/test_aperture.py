@@ -84,6 +84,7 @@ class ServerTests(unittest.TestCase):
         status, ctype, body = self._get("/")
         self.assertEqual(status, 200)
         self.assertIn(b"Open folder", body)
+        self.assertIn(b"Tap to download", body)
 
 
 class CacheTests(unittest.TestCase):

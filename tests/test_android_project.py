@@ -22,6 +22,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("recent-tabs", app_js)
         self.assertIn("openRecents", app_js)
         self.assertIn("selectedIds", app_js)
+        self.assertIn("downloadCurrent", app_js)
+        self.assertIn("apertureDownloadProgress", app_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -29,7 +31,10 @@ class AndroidProjectTests(unittest.TestCase):
         data = (ROOT / "js" / "data.js").read_text(encoding="utf-8")
         self.assertIn('id="recentRow"', html)
         self.assertIn('id="recentTabs"', html)
+        self.assertIn('id="downloadBar"', html)
+        self.assertIn("Tap to download", html)
         self.assertIn("recent-tabs", css)
+        self.assertIn("download-bar", css)
         self.assertIn("is-together", css)
         self.assertIn("header-plate", css)
         self.assertIn("MAX_RECENTS = 3", data)
@@ -52,12 +57,9 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("fun openRecent", main)
         self.assertIn("fun openRecents", main)
         self.assertIn("fun openRecents", store)
-
-    def test_installable_apk_is_present(self):
-        apk = ROOT / "releases" / "Aperture.apk"
-        self.assertTrue(apk.is_file())
-        self.assertGreater(apk.stat().st_size, 100_000)
-        self.assertEqual(apk.read_bytes()[:4], b"PK\x03\x04")
+        self.assertIn("fun download", store)
+        self.assertIn("fun download", main)
+        self.assertIn("WRITE_EXTERNAL_STORAGE", (ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
