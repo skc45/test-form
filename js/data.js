@@ -44,6 +44,7 @@ export function emptySession() {
     filter: "all",
     openedAt: "",
     recents: [],
+    selectedIds: [],
   };
 }
 

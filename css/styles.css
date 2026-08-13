@@ -63,7 +63,7 @@ body {
   z-index: 1;
   height: 100dvh;
   display: grid;
-  grid-template-rows: var(--topbar) 1fr;
+  grid-template-rows: auto 1fr;
 }
 
 img {
@@ -100,11 +100,10 @@ kbd {
 }
 
 .topbar {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
-  align-items: center;
-  gap: 1rem;
-  padding: env(safe-area-inset-top, 0px) 1.25rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: env(safe-area-inset-top, 0px) 0 0;
   border-bottom: 1px solid var(--line);
   background: var(--glass);
   backdrop-filter: blur(28px) saturate(1.45);
@@ -112,6 +111,15 @@ kbd {
     inset 0 1px 0 rgba(255, 255, 255, 0.85),
     0 10px 30px rgba(12, 50, 95, 0.18);
   z-index: 5;
+}
+
+.topbar-main {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 1rem;
+  min-height: calc(76px);
+  padding: 0 1.25rem;
 }
 
 .brand {
@@ -168,6 +176,66 @@ kbd {
   display: flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+.recent-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  padding: 0.2rem 1.25rem 0.55rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.32);
+}
+
+.recent-tabs[hidden] {
+  display: none;
+}
+
+.recent-tabs-kicker {
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.recent-tab-track {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.28rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease), background 0.25s var(--ease);
+}
+
+.recent-tabs.is-together .recent-tab-track {
+  border-color: #c5ecff;
+  background: rgba(180, 220, 255, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 0 0 2px rgba(78, 179, 242, 0.48);
+}
+
+.recent-tabs .header-plate {
+  width: 3.15rem;
+  height: 3.9rem;
+  border-radius: 10px;
+}
+
+.recent-tabs .header-plate .recent-plate-meta {
+  padding: 1.1rem 0.28rem 0.28rem;
+}
+
+.recent-tabs .header-plate .recent-plate-meta strong {
+  font-size: 0.58rem;
+}
+
+.recent-tabs .header-plate .recent-plate-meta span {
+  display: block;
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
 }
 
 .header-plate {
@@ -231,7 +299,8 @@ kbd {
   display: none;
 }
 
-.header-plate[aria-pressed="true"] {
+.header-plate[aria-pressed="true"],
+.header-plate[aria-selected="true"] {
   border-color: #c5ecff;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
@@ -346,7 +415,8 @@ kbd {
 
 .stage {
   overflow: auto;
-  height: calc(100dvh - var(--topbar));
+  min-height: 0;
+  height: 100%;
   scroll-behavior: smooth;
 }
 
@@ -942,6 +1012,15 @@ kbd {
   transform: scale(1.05);
 }
 
+.recent-plate[aria-pressed="true"],
+.recent-plate[aria-selected="true"] {
+  border-color: #c5ecff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 0 0 2px rgba(78, 179, 242, 0.5),
+    0 8px 22px rgba(12, 50, 95, 0.28);
+}
+
 .recent-plate-index {
   position: absolute;
   top: 0.5rem;
@@ -1005,10 +1084,15 @@ kbd {
   }
 
   .topbar {
+    height: auto;
+    padding: env(safe-area-inset-top, 0px) 0 0;
+  }
+
+  .topbar-main {
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
     height: auto;
-    padding: env(safe-area-inset-top, 0px) 0.85rem 0;
+    padding: 0 0.85rem;
   }
 
   .filters {
@@ -1016,6 +1100,12 @@ kbd {
     justify-content: flex-start;
     overflow-x: auto;
     flex-wrap: nowrap;
+  }
+
+  .recent-tabs {
+    justify-content: flex-start;
+    padding: 0.2rem 0.85rem 0.5rem;
+    overflow-x: auto;
   }
 
   :root {
@@ -1106,6 +1196,20 @@ kbd {
   }
 
   .header-plate .recent-plate-meta {
+    display: none;
+  }
+
+  .recent-tabs .header-plate {
+    width: 2.45rem;
+    height: 3.05rem;
+  }
+
+  .recent-tabs .header-plate .recent-plate-meta {
+    display: block;
+    padding: 0.8rem 0.2rem 0.18rem;
+  }
+
+  .recent-tabs-kicker {
     display: none;
   }
 

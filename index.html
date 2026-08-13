@@ -22,43 +22,46 @@
     <div class="aero-sky" aria-hidden="true"></div>
     <div class="app" id="app">
       <header class="topbar" id="topbar">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
-          <div>
-            <p class="brand-kicker">Vol. I · Photographica</p>
-            <h1>Aperture</h1>
+        <div class="topbar-main">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <p class="brand-kicker">Vol. I · Photographica</p>
+              <h1>Aperture</h1>
+            </div>
+          </div>
+
+          <nav class="filters" id="filters" aria-label="Catalog filters"></nav>
+
+          <div class="top-actions">
+            <label class="search">
+              <span class="sr-only">Search catalog</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.2-3.2" />
+              </svg>
+              <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
+            </label>
+            <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
+            <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="8" height="8" rx="1.5" />
+                <rect x="13" y="3" width="8" height="8" rx="1.5" />
+                <rect x="3" y="13" width="8" height="8" rx="1.5" />
+                <rect x="13" y="13" width="8" height="8" rx="1.5" />
+              </svg>
+            </button>
+            <label class="icon-btn upload-btn" title="Add images">
+              <input id="fileInput" type="file" accept="image/*" multiple hidden />
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span class="sr-only">Add images</span>
+            </label>
+            <input id="folderInput" type="file" accept="image/*" webkitdirectory directory multiple hidden />
           </div>
         </div>
-
-        <nav class="filters" id="filters" aria-label="Catalog filters"></nav>
-
-        <div class="top-actions">
-          <label class="search">
-            <span class="sr-only">Search catalog</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20l-3.2-3.2" />
-            </svg>
-            <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
-          </label>
-          <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
-          <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="3" width="8" height="8" rx="1.5" />
-              <rect x="13" y="3" width="8" height="8" rx="1.5" />
-              <rect x="3" y="13" width="8" height="8" rx="1.5" />
-              <rect x="13" y="13" width="8" height="8" rx="1.5" />
-            </svg>
-          </button>
-          <label class="icon-btn upload-btn" title="Add images">
-            <input id="fileInput" type="file" accept="image/*" multiple hidden />
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span class="sr-only">Add images</span>
-          </label>
-          <input id="folderInput" type="file" accept="image/*" webkitdirectory directory multiple hidden />
-        </div>
+        <nav class="recent-tabs" id="recentTabs" hidden aria-label="Recent folders"></nav>
       </header>
 
       <main class="stage" id="stage">

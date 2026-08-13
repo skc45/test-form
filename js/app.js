@@ -24,6 +24,7 @@ const state = {
   pointer: { x: 0, y: 0 },
   blobUrls: [],
   recents: [],
+  selectedIds: [],
 };
 
 const els = {
@@ -53,6 +54,8 @@ const els = {
   opener: document.getElementById("opener"),
   cacheCard: document.getElementById("cacheCard"),
   recentRow: document.getElementById("recentRow"),
+  recentTabs: document.getElementById("recentTabs"),
+  topbar: document.getElementById("topbar"),
   catalogHint: document.getElementById("catalogHint"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
@@ -135,10 +138,8 @@ function currentRecentId() {
   });
 }
 
-function isCurrentRecent(item) {
-  if (state.source !== "folder") return false;
-  const id = currentRecentId();
-  return Boolean(id) && (item.id === id || item.path === state.folderPath || item.name === state.folderName);
+function isSelectedRecent(item) {
+  return state.selectedIds.includes(item.id);
 }
 
 function recentPlateMarkup(item, index, className) {
@@ -146,9 +147,9 @@ function recentPlateMarkup(item, index, className) {
   const count = item.photoCount
     ? `${item.photoCount} plate${item.photoCount === 1 ? "" : "s"}`
     : "Folder";
-  const current = isCurrentRecent(item);
+  const selected = isSelectedRecent(item);
   return `
-      <button class="${className}" type="button" data-recent="${index}" data-id="${escapeHtml(item.id)}" aria-pressed="${current}" title="${escapeHtml(item.name)} · ${escapeHtml(count)}">
+      <button class="${className}" type="button" role="tab" data-recent="${index}" data-id="${escapeHtml(item.id)}" aria-selected="${selected}" aria-pressed="${selected}" title="${escapeHtml(item.name)} · ${escapeHtml(count)}">
         ${cover ? `<img alt="" src="${escapeHtml(cover)}" />` : `<span class="recent-plate-fill"></span>`}
         <span class="recent-plate-index">${plateNumber(index)}</span>
         <span class="recent-plate-meta"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(count)}</span></span>
@@ -164,18 +165,7 @@ function bindRecentPlateMedia(root) {
 }
 
 function renderFilters() {
-  const [all, ...rest] = state.categories;
-  const allBtn = all
-    ? `<button class="filter" type="button" data-filter="${all.id}" aria-pressed="${
-        state.filter === all.id
-      }">${all.label}</button>`
-    : "";
-  const recents = state.recents.length
-    ? `<span class="filter-recents" role="list" aria-label="Recent folders">${state.recents
-        .map((item, index) => recentPlateMarkup(item, index, "header-plate"))
-        .join("")}</span>`
-    : "";
-  const restBtns = rest
+  els.filters.innerHTML = state.categories
     .map(
       (cat) => `
       <button class="filter" type="button" data-filter="${cat.id}" aria-pressed="${
@@ -183,8 +173,36 @@ function renderFilters() {
       }">${cat.label}</button>`
     )
     .join("");
-  els.filters.innerHTML = `${allBtn}${recents}${restBtns}`;
-  bindRecentPlateMedia(els.filters);
+}
+
+function ensureSelectedRecents() {
+  state.selectedIds = state.selectedIds.filter((id) => state.recents.some((item) => item.id === id));
+  if (state.selectedIds.length || state.source !== "folder") return;
+  const current = currentRecentId();
+  const match = state.recents.find((item) => item.id === current || item.path === state.folderPath || item.name === state.folderName);
+  if (match) state.selectedIds = [match.id];
+}
+
+function renderRecentTabs() {
+  const layer = els.recentTabs;
+  if (!layer) return;
+  ensureSelectedRecents();
+  if (!state.recents.length) {
+    layer.hidden = true;
+    layer.innerHTML = "";
+    els.topbar?.classList.remove("has-recent-tabs", "is-together");
+    return;
+  }
+  const together = state.selectedIds.length > 1;
+  layer.hidden = false;
+  layer.classList.toggle("is-together", together);
+  els.topbar?.classList.toggle("has-recent-tabs", true);
+  layer.innerHTML = `
+    <p class="recent-tabs-kicker">${together ? "Selected together" : "Recent folders"}</p>
+    <div class="recent-tab-track" role="tablist" aria-label="Recent folders" aria-multiselectable="true">
+      ${state.recents.map((item, index) => recentPlateMarkup(item, index, "header-plate recent-tab")).join("")}
+    </div>`;
+  bindRecentPlateMedia(layer);
 }
 
 function renderHero() {
@@ -353,6 +371,7 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
   renderFilters();
   renderHero();
   renderCatalog();
+  renderRecentTabs();
   persistCatalog();
 }
 
@@ -367,16 +386,24 @@ async function persistCatalogAsync() {
       hint.innerHTML = `Cached folder · ${escapeHtml(state.folderName)} · <kbd>O</kbd> change · <kbd>?</kbd> shortcuts`;
     }
     const session = await cache.loadSession();
-    const cover = await coverFromPhoto(state.photos[0]);
-    const entry = {
-      id: state.folderPath || state.folderName,
-      name: state.folderName,
-      path: state.folderPath,
-      photoCount: state.photos.length,
-      openedAt: new Date().toISOString(),
-      cover,
-    };
-    const recents = cache.upsertRecent(session.recents, entry);
+    const combined = state.selectedIds.length > 1;
+    let recents = cache.normalizeRecents(session.recents);
+    if (!combined) {
+      const cover = await coverFromPhoto(state.photos[0]);
+      const entry = {
+        id: state.folderPath || state.folderName,
+        name: state.folderName,
+        path: state.folderPath,
+        photoCount: state.photos.length,
+        openedAt: new Date().toISOString(),
+        cover,
+      };
+      recents = cache.upsertRecent(session.recents, entry);
+      if (state.folderHandle) {
+        cache.saveFolderHandle(state.folderHandle, entry);
+      }
+      if (entry.id && state.selectedIds.length <= 1) state.selectedIds = [entry.id];
+    }
     cache.saveSession({
       source: "folder",
       folderName: state.folderName,
@@ -384,14 +411,12 @@ async function persistCatalogAsync() {
       photoCount: state.photos.length,
       layout: state.layout,
       filter: state.filter,
-      openedAt: entry.openedAt,
+      openedAt: new Date().toISOString(),
+      selectedIds: state.selectedIds,
       recents,
     });
     cache.saveCatalogIndex(state.photos);
-    if (state.folderHandle) {
-      cache.saveFolderHandle(state.folderHandle, entry);
-    }
-    paintCacheCard({ ...session, recents, folderName: state.folderName, folderPath: state.folderPath, source: "folder" });
+    paintCacheCard({ ...session, recents, folderName: state.folderName, folderPath: state.folderPath, source: "folder", selectedIds: state.selectedIds });
     return;
   }
   if (hint) {
@@ -535,6 +560,7 @@ async function openDirectoryHandle(handle) {
   await walkDirectoryHandle(handle, photos, handle.name);
   if (photos.length) photos[0].featured = true;
   state.folderHandle = handle;
+  state.selectedIds = [handle.name];
   setCatalog(photos, { folderName: handle.name, folderPath: handle.name, source: "folder", handle });
   return photos.length;
 }
@@ -567,36 +593,89 @@ async function openFolderPicker() {
   els.folderInput.click();
 }
 
-async function openRecent(index, id) {
-  if (window.ApertureAndroid?.openRecent) {
-    window.ApertureAndroid.openRecent(index);
+async function openRecent(index, id, { exclusive = true } = {}) {
+  toggleRecentSelection(id, { exclusive });
+  renderRecentTabs();
+  await loadSelectedRecents();
+}
+
+function toggleRecentSelection(id, { exclusive = false } = {}) {
+  if (!id) return;
+  if (exclusive) {
+    state.selectedIds = [id];
     return;
   }
-  const handles = await cache.loadRecentHandles();
-  const handle = handles[id];
-  if (handle) {
-    const permission = await cache.requestHandlePermission(handle);
-    if (permission === "granted") {
-      await openDirectoryHandle(handle);
-      return;
+  if (state.selectedIds.includes(id)) {
+    if (state.selectedIds.length > 1) {
+      state.selectedIds = state.selectedIds.filter((item) => item !== id);
     }
+    return;
   }
-  const session = await loadMergedSession();
-  const recents = cache.recentsFromSession(session);
-  const item = recents[index] || recents.find((entry) => entry.id === id);
-  if (item?.path) {
+  state.selectedIds = [...state.selectedIds, id];
+}
+
+function selectedRecentItems() {
+  return state.recents.filter((item) => state.selectedIds.includes(item.id));
+}
+
+function selectedLabel(items) {
+  if (items.length === 1) return items[0].name;
+  return items.map((item) => item.name).join(" + ");
+}
+
+async function loadSelectedRecents() {
+  const items = selectedRecentItems();
+  if (!items.length) return;
+  const indices = items.map((item) => state.recents.findIndex((entry) => entry.id === item.id));
+
+  if (window.ApertureAndroid?.openRecents) {
+    window.ApertureAndroid.openRecents(JSON.stringify(indices));
+    return;
+  }
+  if (items.length === 1 && window.ApertureAndroid?.openRecent) {
+    window.ApertureAndroid.openRecent(indices[0]);
+    return;
+  }
+
+  const handles = await cache.loadRecentHandles();
+  const loaded = [];
+  for (const item of items) {
+    const handle = handles[item.id];
+    if (!handle) continue;
+    const permission = await cache.requestHandlePermission(handle);
+    if (permission === "granted") loaded.push({ item, handle });
+  }
+  if (loaded.length === items.length && loaded.length) {
+    revokeBlobs();
+    const photos = [];
+    for (const { handle } of loaded) {
+      await walkDirectoryHandle(handle, photos, handle.name);
+    }
+    if (photos.length) photos[0].featured = true;
+    state.folderHandle = loaded[0].handle;
+    setCatalog(photos, {
+      folderName: selectedLabel(loaded.map((entry) => entry.item)),
+      folderPath: loaded[0].item.path || loaded[0].handle.name,
+      source: "folder",
+      handle: loaded[0].handle,
+    });
+    return;
+  }
+
+  const paths = items.map((item) => item.path).filter(Boolean);
+  if (paths.length) {
     try {
       const response = await fetch("/api/open", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ path: item.path }),
+        body: JSON.stringify(paths.length === 1 ? { path: paths[0] } : { paths }),
       });
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data.photos) && data.photos.length) {
           setCatalog(data.photos, {
-            folderName: data.folder || item.name,
-            folderPath: data.path || item.path,
+            folderName: data.folder || selectedLabel(items),
+            folderPath: data.path || paths[0],
             source: "folder",
           });
           return;
@@ -606,18 +685,23 @@ async function openRecent(index, id) {
       /* static hosts have no open API */
     }
   }
-  await openFolderPicker();
+  if (items.length === 1) await openFolderPicker();
 }
 
 function paintCacheCard(session) {
   const recents = cache.recentsFromSession(session);
   state.recents = recents;
+  if (Array.isArray(session?.selectedIds) && session.selectedIds.length && !state.selectedIds.length) {
+    state.selectedIds = session.selectedIds;
+  }
   const row = els.recentRow;
   els.cacheCard.hidden = recents.length === 0;
   if (!recents.length) {
     document.getElementById("openerFolderBtn").classList.add("opener-primary");
     if (row) row.innerHTML = "";
+    state.selectedIds = [];
     renderFilters();
+    renderRecentTabs();
     return;
   }
   document.getElementById("openerFolderBtn").classList.remove("opener-primary");
@@ -626,6 +710,7 @@ function paintCacheCard(session) {
     bindRecentPlateMedia(row);
   }
   renderFilters();
+  renderRecentTabs();
 }
 
 async function forgetFolder() {
@@ -637,6 +722,7 @@ async function forgetFolder() {
   }
   state.folderHandle = null;
   state.folderPath = "";
+  state.selectedIds = [];
   paintCacheCard(cache.emptySession());
   restoreDemo();
 }
@@ -667,6 +753,7 @@ async function loadMergedSession() {
               }
             : null,
         ].filter(Boolean)),
+        selectedIds: session.selectedIds || disk.selectedIds || [],
       };
     }
   } catch {
@@ -703,6 +790,7 @@ function hideOpener() {
 
 function restoreDemo() {
   revokeBlobs();
+  state.selectedIds = [];
   setCatalog(DEMO_PHOTOS.map((photo) => ({ ...photo })), { source: "demo" });
 }
 
@@ -713,6 +801,8 @@ async function loadFromApi() {
     const data = await response.json();
     if (!data || !Array.isArray(data.photos)) return false;
     if (!data.photos.length) return false;
+    const paths = Array.isArray(data.paths) ? data.paths.filter(Boolean) : data.path ? [data.path] : [];
+    if (paths.length) state.selectedIds = paths;
     setCatalog(data.photos, {
       folderName: data.folder || "",
       folderPath: data.path || "",
@@ -821,11 +911,6 @@ async function wire() {
   else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
   els.filters.addEventListener("click", (event) => {
-    const recentBtn = event.target.closest("[data-recent]");
-    if (recentBtn) {
-      openRecent(Number(recentBtn.dataset.recent), recentBtn.dataset.id);
-      return;
-    }
     const btn = event.target.closest("[data-filter]");
     if (!btn) return;
     state.filter = btn.dataset.filter;
@@ -851,7 +936,12 @@ async function wire() {
   els.recentRow?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-recent]");
     if (!btn) return;
-    openRecent(Number(btn.dataset.recent), btn.dataset.id);
+    openRecent(Number(btn.dataset.recent), btn.dataset.id, { exclusive: true });
+  });
+  els.recentTabs?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-recent]");
+    if (!btn) return;
+    openRecent(Number(btn.dataset.recent), btn.dataset.id, { exclusive: false });
   });
   document.getElementById("demoBtn").addEventListener("click", restoreDemo);
   els.folderInput.addEventListener("change", () => {

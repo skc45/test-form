@@ -19,16 +19,19 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("openRecent", app_js)
         self.assertIn("recent-plate", app_js)
         self.assertIn("header-plate", app_js)
-        self.assertIn("filter-recents", app_js)
+        self.assertIn("recent-tabs", app_js)
+        self.assertIn("openRecents", app_js)
+        self.assertIn("selectedIds", app_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         css = (ROOT / "css" / "styles.css").read_text(encoding="utf-8")
         data = (ROOT / "js" / "data.js").read_text(encoding="utf-8")
         self.assertIn('id="recentRow"', html)
-        self.assertIn("recent-plate", css)
+        self.assertIn('id="recentTabs"', html)
+        self.assertIn("recent-tabs", css)
+        self.assertIn("is-together", css)
         self.assertIn("header-plate", css)
-        self.assertIn("filter-recents", css)
         self.assertIn("MAX_RECENTS = 3", data)
 
     def test_installable_apk_is_present(self):
@@ -47,6 +50,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("/api/catalog", main)
         self.assertIn("/api/recent-cover", main)
         self.assertIn("fun openRecent", main)
+        self.assertIn("fun openRecents", main)
+        self.assertIn("fun openRecents", store)
 
     def test_installable_apk_is_present(self):
         apk = ROOT / "releases" / "Aperture.apk"

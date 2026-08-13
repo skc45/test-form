@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
+import org.json.JSONArray
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -145,8 +146,19 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun openRecent(index: Int) {
+            openRecents(JSONArray().put(index).toString())
+        }
+
+        @JavascriptInterface
+        fun openRecents(indexesJson: String) {
             runOnUiThread {
-                if (!store.openRecent(index)) {
+                val indexes = try {
+                    val arr = org.json.JSONArray(indexesJson)
+                    IntArray(arr.length()) { arr.getInt(it) }
+                } catch (_: Exception) {
+                    intArrayOf()
+                }
+                if (!store.openRecents(indexes)) {
                     pickFolder.launch(null)
                 } else {
                     notifyCatalog()

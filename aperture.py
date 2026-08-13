@@ -80,7 +80,15 @@ class Runtime:
     """Mutable server state so recent plates can switch the open folder."""
 
     def __init__(self, folder: Path | None = None):
-        self.folder = folder.resolve() if folder else None
+        self.folders: list[Path] = [folder.resolve()] if folder else []
+
+    @property
+    def folder(self) -> Path | None:
+        return self.folders[0] if self.folders else None
+
+    @folder.setter
+    def folder(self, value: Path | None) -> None:
+        self.folders = [value] if value else []
 
 
 def folder_name_from_path(path: str) -> str:
@@ -286,6 +294,27 @@ def scan_folder(folder: Path) -> list[dict]:
     return photos
 
 
+def scan_folders(folders: list[Path]) -> list[dict]:
+    photos: list[dict] = []
+    multi = len(folders) > 1
+    for index, folder in enumerate(folders):
+        for photo in scan_folder(folder):
+            photo["featured"] = False
+            if multi:
+                rel = photo["id"]
+                photo["id"] = f"{index}/{rel}"
+                media = "/media/" + quote(photo["id"])
+                photo["src"] = media
+                photo["thumb"] = media
+                photo["hero"] = media
+            photos.append(photo)
+    if photos:
+        photos[0]["featured"] = True
+        for index, photo in enumerate(photos):
+            photo["index"] = index
+    return photos
+
+
 class ApertureHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, runtime: Runtime | None = None, folder: Path | None = None, app_mode: bool = True, **kwargs):
         self.runtime = runtime or Runtime(folder)
@@ -302,12 +331,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/catalog":
-            photos = scan_folder(self.folder) if self.folder else []
+            photos = scan_folders(self.runtime.folders) if self.runtime.folders else []
             session = load_disk_session()
+            folder_names = [item.name for item in self.runtime.folders]
             self._send_json(
                 {
-                    "folder": self.folder.name if self.folder else "",
+                    "folder": " + ".join(folder_names),
                     "path": str(self.folder) if self.folder else "",
+                    "paths": [str(item) for item in self.runtime.folders],
                     "app": self.app_mode,
                     "cached": bool(session.get("lastFolder")),
                     "photos": photos,
@@ -336,23 +367,44 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not found")
             return
         body = self._read_json()
-        raw = str(body.get("path") or "").strip()
-        folder = Path(raw).expanduser() if raw else None
-        if not folder or not folder.is_dir():
+        folders = self._folders_from_body(body)
+        if not folders:
             self.send_error(404, "Folder not found")
             return
-        folder = folder.resolve()
-        photos = scan_folder(folder)
-        remember_folder(folder, len(photos))
-        self.runtime.folder = folder
+        photos = scan_folders(folders)
+        if len(folders) == 1:
+            remember_folder(folders[0], len(photos))
+        self.runtime.folders = folders
         self._send_json(
             {
                 "ok": True,
-                "folder": folder.name,
-                "path": str(folder),
+                "folder": " + ".join(item.name for item in folders),
+                "path": str(folders[0]),
+                "paths": [str(item) for item in folders],
                 "photos": photos,
             }
         )
+
+    def _folders_from_body(self, body: dict) -> list[Path]:
+        raw_paths = body.get("paths")
+        values: list[str] = []
+        if isinstance(raw_paths, list):
+            values = [str(item).strip() for item in raw_paths if str(item).strip()]
+        elif str(body.get("path") or "").strip():
+            values = [str(body.get("path")).strip()]
+        folders: list[Path] = []
+        seen: set[str] = set()
+        for raw in values:
+            folder = Path(raw).expanduser()
+            if not folder.is_dir():
+                continue
+            resolved = folder.resolve()
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            folders.append(resolved)
+        return folders
 
     def _read_json(self) -> dict:
         try:
@@ -406,12 +458,33 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self._send_image_file(cover)
 
     def _send_media(self, rel: str) -> None:
-        if not self.folder:
+        folders = self.runtime.folders
+        if not folders:
             self.send_error(404, "No folder open")
             return
         rel = posixpath.normpath(rel).lstrip("/")
-        path = (self.folder / rel).resolve()
-        if not safe_under(self.folder, path) or not is_image(path):
+        folder = self.folder
+        relative = rel
+        if len(folders) > 1:
+            head, sep, rest = rel.partition("/")
+            if not sep:
+                self.send_error(404, "Not found")
+                return
+            try:
+                index = int(head)
+            except ValueError:
+                self.send_error(404, "Not found")
+                return
+            if index < 0 or index >= len(folders):
+                self.send_error(404, "Not found")
+                return
+            folder = folders[index]
+            relative = rest
+        if not folder:
+            self.send_error(404, "No folder open")
+            return
+        path = (folder / relative).resolve()
+        if not safe_under(folder, path) or not is_image(path):
             self.send_error(404, "Not found")
             return
         self._send_image_file(path)

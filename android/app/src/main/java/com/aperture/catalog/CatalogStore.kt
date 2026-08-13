@@ -18,6 +18,7 @@ class CatalogStore(private val context: Context) {
         context.getSharedPreferences("aperture_cache", Context.MODE_PRIVATE)
     private val photos = mutableListOf<JSONObject>()
     private val media = linkedMapOf<String, Pair<Uri, String>>()
+    private val currentTrees = mutableListOf<Uri>()
 
     fun restore() {
         val raw = prefs.getString(KEY_URI, "").orEmpty()
@@ -40,6 +41,7 @@ class CatalogStore(private val context: Context) {
         prefs.edit().clear().apply()
         photos.clear()
         media.clear()
+        currentTrees.clear()
     }
 
     fun openTree(uri: Uri) {
@@ -58,15 +60,30 @@ class CatalogStore(private val context: Context) {
     }
 
     fun openRecent(index: Int): Boolean {
+        return openRecents(intArrayOf(index))
+    }
+
+    fun openRecents(indexes: IntArray): Boolean {
         val recents = recentsArray()
-        if (index < 0 || index >= recents.length()) return false
-        val raw = recents.getJSONObject(index).optString("path").ifBlank {
-            recents.getJSONObject(index).optString("id")
+        val trees = linkedMapOf<String, Uri>()
+        for (index in indexes) {
+            if (index < 0 || index >= recents.length()) continue
+            val item = recents.getJSONObject(index)
+            val raw = item.optString("path").ifBlank { item.optString("id") }
+            if (raw.isBlank()) continue
+            val uri = Uri.parse(raw)
+            if (!hasPermission(uri)) continue
+            trees[raw] = uri
         }
-        if (raw.isBlank()) return false
-        val uri = Uri.parse(raw)
-        if (!hasPermission(uri)) return false
-        openTree(uri)
+        if (trees.isEmpty()) return false
+        val uris = trees.values.toList()
+        val names = uris.map { DocumentFile.fromTreeUri(context, it)?.name ?: "Folder" }
+        prefs.edit()
+            .putString(KEY_URI, uris.first().toString())
+            .putString(KEY_NAME, names.joinToString(" + "))
+            .putLong(KEY_OPENED, System.currentTimeMillis())
+            .apply()
+        scanTrees(uris)
         return true
     }
 
@@ -75,7 +92,8 @@ class CatalogStore(private val context: Context) {
         val path = prefs.getString(KEY_URI, "").orEmpty()
         val body = JSONObject()
             .put("folder", name)
-            .put("path", path)
+            .put("path", currentTrees.firstOrNull()?.toString() ?: path)
+            .put("paths", JSONArray(currentTrees.map { it.toString() }))
             .put("app", true)
             .put("cached", path.isNotBlank())
             .put("photos", JSONArray(photos))
@@ -137,37 +155,47 @@ class CatalogStore(private val context: Context) {
     }
 
     private fun scan(tree: Uri) {
+        scanTrees(listOf(tree))
+    }
+
+    private fun scanTrees(trees: List<Uri>) {
         photos.clear()
         media.clear()
-        val root = DocumentFile.fromTreeUri(context, tree) ?: return
-        val folderName = root.name ?: "Folder"
-        walk(root, folderName, "")
+        currentTrees.clear()
+        currentTrees.addAll(trees)
+        val multi = trees.size > 1
+        trees.forEachIndexed { index, tree ->
+            val root = DocumentFile.fromTreeUri(context, tree) ?: return@forEachIndexed
+            val folderName = root.name ?: "Folder"
+            walk(root, folderName, "", if (multi) "$index/" else "")
+        }
         photos.forEachIndexed { index, photo ->
             photo.put("index", index)
-            if (index == 0) photo.put("featured", true)
+            photo.put("featured", index == 0)
         }
         prefs.edit().putInt(KEY_COUNT, photos.size).apply()
     }
 
-    private fun walk(dir: DocumentFile, folderName: String, prefix: String) {
+    private fun walk(dir: DocumentFile, folderName: String, prefix: String, idPrefix: String = "") {
         val children = dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }
         for (child in children) {
             val name = child.name ?: continue
             if (child.isDirectory) {
                 val next = if (prefix.isEmpty()) name else "$prefix/$name"
-                walk(child, folderName, next)
+                walk(child, folderName, next, idPrefix)
                 continue
             }
             if (!isImage(name)) continue
             val rel = if (prefix.isEmpty()) name else "$prefix/$name"
+            val key = idPrefix + rel
             val mime = mimeFor(name)
-            media[rel] = child.uri to mime
+            media[key] = child.uri to mime
             val parent = if (prefix.contains("/")) prefix.substringAfterLast("/") else folderName
             val location = prefix.ifEmpty { folderName }
             val year = Calendar.getInstance().apply { timeInMillis = child.lastModified() }.get(Calendar.YEAR)
-            val mediaPath = "/media/" + Uri.encode(rel)
+            val mediaPath = "/media/" + Uri.encode(key)
             photos += JSONObject()
-                .put("id", rel)
+                .put("id", key)
                 .put("title", name.substringBeforeLast("."))
                 .put("photographer", folderName)
                 .put("location", location)

@@ -183,6 +183,39 @@ class CacheTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_open_multiple_folders(self):
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        (other / "b.png").write_bytes(TINY_PNG)
+        runtime = app.Runtime(self.photos)
+        server = app.run_server(self.photos, 0, runtime=runtime)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            payload = json.dumps({"paths": [str(self.photos), str(other)]})
+            conn.request("POST", "/api/open", payload, {"Content-Type": "application/json"})
+            response = conn.getresponse()
+            data = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(data["folder"], f"{self.photos.name} + {other.name}")
+            self.assertEqual(len(data["photos"]), 2)
+            self.assertEqual(len(runtime.folders), 2)
+            ids = [photo["id"] for photo in data["photos"]]
+            self.assertTrue(any(item.startswith("0/") for item in ids))
+            self.assertTrue(any(item.startswith("1/") for item in ids))
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/media/" + data["photos"][0]["id"])
+            media = conn.getresponse()
+            body = media.read()
+            conn.close()
+            self.assertEqual(media.status, 200)
+            self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_missing_cached_folder_is_ignored(self):
         missing = Path(self.tmp.name) / "gone"
         app.save_disk_session({"lastFolder": str(missing), "lastFolderName": "gone", "source": "folder"})
