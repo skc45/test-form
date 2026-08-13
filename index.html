@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070708" />
+    <title>Aperture — Full-screen catalog</title>
+    <meta
+      name="description"
+      content="A cinematic full-screen image catalog and viewer with keyboard navigation, slideshow, and local uploads."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,320;9..144,500;9..144,600&family=Outfit:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header class="topbar" id="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="brand-kicker">Vol. I · Photographica</p>
+            <h1>Aperture</h1>
+          </div>
+        </div>
+
+        <nav class="filters" id="filters" aria-label="Catalog filters"></nav>
+
+        <div class="top-actions">
+          <label class="search">
+            <span class="sr-only">Search catalog</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.2-3.2" />
+            </svg>
+            <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
+          </label>
+          <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="8" height="8" rx="1.5" />
+              <rect x="13" y="3" width="8" height="8" rx="1.5" />
+              <rect x="3" y="13" width="8" height="8" rx="1.5" />
+              <rect x="13" y="13" width="8" height="8" rx="1.5" />
+            </svg>
+          </button>
+          <label class="icon-btn upload-btn" title="Add images">
+            <input id="fileInput" type="file" accept="image/*" multiple hidden />
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span class="sr-only">Add images</span>
+          </label>
+        </div>
+      </header>
+
+      <main class="stage" id="stage">
+        <section class="hero" id="hero" aria-label="Featured plate">
+          <button class="hero-frame" id="heroBtn" type="button">
+            <img id="heroImg" alt="" />
+            <div class="hero-veil"></div>
+            <div class="hero-copy">
+              <p class="hero-index" id="heroIndex">Plate 01</p>
+              <h2 id="heroTitle"></h2>
+              <p id="heroMeta"></p>
+            </div>
+          </button>
+        </section>
+
+        <section class="catalog-wrap">
+          <div class="catalog-head">
+            <p id="resultCount">Loading catalog…</p>
+            <p class="hint">Click a plate · arrows to browse · <kbd>?</kbd> shortcuts</p>
+          </div>
+          <div class="catalog masonry" id="catalog" role="list"></div>
+          <p class="empty" id="empty" hidden>No plates match that search.</p>
+        </section>
+      </main>
+    </div>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="viewer-stage" id="viewerStage">
+        <img class="viewer-image" id="viewerImage" alt="" draggable="false" />
+        <div class="viewer-loader" id="viewerLoader" aria-hidden="true"></div>
+      </div>
+
+      <button class="nav-hit left" id="prevBtn" type="button" aria-label="Previous image">
+        <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+      </button>
+      <button class="nav-hit right" id="nextBtn" type="button" aria-label="Next image">
+        <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+      </button>
+
+      <div class="viewer-chrome top" id="viewerTop">
+        <button class="text-btn" id="closeBtn" type="button">Close</button>
+        <div class="viewer-identity">
+          <p class="viewer-kicker" id="viewerKicker"></p>
+          <h2 id="viewerTitle"></h2>
+          <p id="viewerMeta"></p>
+        </div>
+        <div class="viewer-tools">
+          <span class="counter" id="counter"></span>
+          <button class="icon-btn" id="fitBtn" type="button" aria-label="Toggle fill" title="Fit / fill">
+            <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+          </button>
+          <button class="icon-btn" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
+          <button class="icon-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+          <button class="icon-btn" id="slideBtn" type="button" aria-label="Slideshow" title="Slideshow">
+            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+          </button>
+          <button class="icon-btn" id="fullBtn" type="button" aria-label="Browser fullscreen" title="Fullscreen">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="filmstrip" id="filmstrip" role="listbox" aria-label="Catalog filmstrip"></div>
+    </div>
+
+    <div class="help" id="help" hidden>
+      <div class="help-card">
+        <p class="help-kicker">Keyboard</p>
+        <h2>Shortcuts</h2>
+        <dl>
+          <div><dt>← →</dt><dd>Previous / next</dd></div>
+          <div><dt>Space</dt><dd>Slideshow</dd></div>
+          <div><dt>F</dt><dd>Browser fullscreen</dd></div>
+          <div><dt>Z / 0</dt><dd>Zoom in / reset</dd></div>
+          <div><dt>C</dt><dd>Fit or fill</dd></div>
+          <div><dt>Esc</dt><dd>Close viewer</dd></div>
+          <div><dt>?</dt><dd>This overlay</dd></div>
+        </dl>
+        <p class="help-foot">Drop image files onto the catalog to add them.</p>
+        <button class="text-btn" id="helpClose" type="button">Got it</button>
+      </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
