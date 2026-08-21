@@ -464,7 +464,10 @@ def import_chain_file(folder: Path, receive: bool = False) -> bool:
         blocks = parse_chain_document(data)
         if not blocks or not verify_chain(blocks):
             continue
-        save_chain(merge_chains(load_chain(), blocks, prefer_remote=receive), [folder, folder / VAULT_DIR_NAME])
+        mirrors = [folder]
+        if folder.name.lower() != VAULT_DIR_NAME:
+            mirrors.append(folder / VAULT_DIR_NAME)
+        save_chain(merge_chains(load_chain(), blocks, prefer_remote=receive), mirrors)
         return True
     return False
 
@@ -578,7 +581,12 @@ def receive_sync_folder(folder: Path) -> dict:
     root = folder.resolve()
     import_chain_file(root, receive=True)
     ingest_plates(root)
-    vault = root / VAULT_DIR_NAME if (root / VAULT_DIR_NAME).is_dir() else root
+    dest = load_vault_folder()
+    vault = dest
+    for candidate in (root, dest, root / VAULT_DIR_NAME):
+        if candidate.is_dir() and collect_plates(candidate):
+            vault = candidate
+            break
     remember_vault(vault)
     listing = list_vault(load_vault_folder())
     listing["ok"] = True
