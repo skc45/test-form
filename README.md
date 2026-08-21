@@ -78,14 +78,14 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 - Category filters from subfolders, plus search
 - Full-screen viewer with fit/fill, zoom, pan, slideshow, and a filmstrip
 - Deep links: `#photo/solstice` opens that demo plate directly
-- Each sent post is sealed onto a local SHA-256 hash chain (difficulty 3). Open the ledger with the chain icon or **B**
+- Each sent post is sealed onto a local SHA-256 hash chain (difficulty 3). Open the **blockchain monitor** with the chain icon or **B**, then **Unlock folder** to decode `.apc` plates from the blockchain folder into the catalog
 
 ## Shortcuts
 
 | Key | Action |
 | --- | --- |
 | `O` | Open folder |
-| `B` | Blockchain ledger |
+| `B` | Blockchain monitor |
 | `←` `→` | Previous / next |
 | `Space` | Slideshow |
 | `F` | Browser fullscreen |

@@ -96,6 +96,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="postForm"', body)
         self.assertIn(b"New post", body)
         self.assertIn(b'id="chainLedger"', body)
+        self.assertIn(b"Unlock folder", body)
+        self.assertIn(b"Blockchain monitor", body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -135,6 +137,11 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(data["block"]["hash"].startswith("0" * 3))
         self.assertEqual(data["block"]["height"], 1)
         self.assertTrue(data["valid"])
+        vault = app.cache_home() / "blockchain" / data["vault"]
+        self.assertTrue(vault.is_file())
+        unlocked = app.unlock_bytes(vault.read_bytes())
+        self.assertIsNotNone(unlocked)
+        self.assertEqual(unlocked[1], TINY_PNG)
 
     def test_chain_endpoint_lists_blocks(self):
         conn = HTTPConnection(self.host, self.port, timeout=5)
@@ -156,6 +163,23 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(posted["ok"])
         self.assertEqual(posted["block"]["caption"], "On chain")
         self.assertTrue(posted["valid"])
+
+    def test_vault_lists_and_serves_unlocked_plate(self):
+        self.test_post_saves_plate_and_caption()
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request("GET", "/api/vault")
+        payload = json.loads(conn.getresponse().read())
+        conn.close()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["valid"])
+        self.assertGreaterEqual(len(payload["files"]), 1)
+        self.assertTrue(payload["files"][0]["unlocked"])
+        self.assertGreaterEqual(len(payload["photos"]), 1)
+        name = payload["files"][0]["name"]
+        status, ctype, body = self._get("/media/vault/" + name)
+        self.assertEqual(status, 200)
+        self.assertTrue(ctype.startswith("image/"))
+        self.assertEqual(body, TINY_PNG)
 
 
 class CacheTests(unittest.TestCase):
@@ -385,6 +409,28 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(app.verify_chain(loaded))
         loaded[-1]["caption"] = "tampered"
         self.assertFalse(app.verify_chain(loaded))
+
+    def test_vault_decodes_with_chain_and_rejects_tamper(self):
+        block = app.append_block("Ridge", "Golden hour", "ridge.png", "abc123")
+        packed = app.lock_bytes(TINY_PNG, block, "ridge.png", "Ridge", "Golden hour", "image/png")
+        self.assertTrue(packed.startswith(app.VAULT_MAGIC))
+        unlocked = app.unlock_bytes(packed)
+        self.assertIsNotNone(unlocked)
+        self.assertEqual(unlocked[1], TINY_PNG)
+        self.assertEqual(unlocked[0]["title"], "Ridge")
+        folder = app.remember_vault(Path(self.tmp.name) / "vault")
+        name = app.vault_filename(block, "ridge.png")
+        (folder / name).write_bytes(packed)
+        listing = app.list_vault(folder)
+        self.assertTrue(listing["valid"])
+        self.assertEqual(listing["files"][0]["unlocked"], True)
+        chain = app.load_chain()
+        chain[-1]["caption"] = "tampered"
+        app.save_chain(chain)
+        self.assertIsNone(app.unlock_bytes(packed))
+        listing = app.list_vault(folder)
+        self.assertFalse(listing["valid"])
+        self.assertFalse(listing["files"][0]["unlocked"])
 
 
 if __name__ == "__main__":

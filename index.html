@@ -43,7 +43,7 @@
               <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
             </label>
             <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
-            <button class="icon-btn" id="chainBtn" type="button" aria-label="Open blockchain" title="Blockchain">
+            <button class="icon-btn" id="chainBtn" type="button" aria-label="Open blockchain monitor" title="Blockchain monitor">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="3" y="4" width="8" height="8" rx="1.6" />
                 <rect x="13" y="12" width="8" height="8" rx="1.6" />
@@ -158,7 +158,7 @@
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Send as a post</dd></div>
-          <div><dt>B</dt><dd>Blockchain ledger</dd></div>
+          <div><dt>B</dt><dd>Blockchain monitor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
@@ -211,16 +211,21 @@
     </div>
 
     <div class="chain-ledger" id="chainLedger" hidden>
-      <div class="chain-card">
-        <p class="help-kicker">Ledger</p>
+      <div class="chain-card chain-monitor">
+        <p class="help-kicker">Monitor</p>
         <h2>Aperture chain</h2>
         <p class="chain-status" id="chainStatus">Loading blocks…</p>
+        <p class="chain-vault-status" id="chainVaultStatus">Unlock a blockchain folder to decode sealed plates.</p>
         <ol class="chain-list" id="chainList"></ol>
+        <ol class="chain-list chain-files" id="chainFiles" hidden></ol>
         <div class="opener-actions">
-          <button class="text-btn opener-primary" id="chainClose" type="button">Close</button>
+          <button class="text-btn opener-primary" id="chainUnlock" type="button">Unlock folder</button>
+          <button class="text-btn" id="chainClose" type="button">Close</button>
         </div>
       </div>
     </div>
+    <input id="vaultInput" type="file" accept=".apc,.aplate,application/octet-stream" multiple hidden />
+    <input id="vaultFolderInput" type="file" webkitdirectory directory multiple hidden />
 
     <script type="module" src="js/app.js"></script>
   </body>

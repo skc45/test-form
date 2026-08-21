@@ -1115,7 +1115,7 @@ kbd {
 }
 
 .chain-card {
-  width: min(460px, calc(100vw - 1.6rem));
+  width: min(520px, calc(100vw - 1.6rem));
   max-height: min(82vh, 40rem);
   overflow: auto;
   padding: 1.5rem 1.35rem 1.4rem;
@@ -1179,6 +1179,43 @@ kbd {
 
 .chain-block.is-genesis {
   border-color: #c5ecff;
+}
+
+.chain-vault-status {
+  margin: -0.35rem 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.chain-files {
+  margin-top: 0.2rem;
+}
+
+.chain-block.is-unlocked {
+  cursor: pointer;
+  border-color: #b7f0c9;
+}
+
+.chain-block.is-locked {
+  opacity: 0.72;
+}
+
+.chain-block .chain-flag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #155a86;
+  background: rgba(197, 236, 255, 0.7);
+}
+
+.chain-block.is-unlocked .chain-flag {
+  color: #14633a;
+  background: rgba(183, 240, 201, 0.75);
 }
 
 .card,

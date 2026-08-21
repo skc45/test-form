@@ -203,6 +203,187 @@ def append_block(title: str, caption: str, filename: str, image_hash: str) -> di
     return block
 
 
+VAULT_MAGIC = b"APCH"
+VAULT_EXT = ".apc"
+VAULT_EXTS = {".apc", ".aplate"}
+
+
+def default_vault_dir() -> Path:
+    path = cache_home() / "blockchain"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def remember_vault(folder: Path) -> Path:
+    resolved = folder.expanduser().resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    save_disk_session({"blockchainFolder": str(resolved), "blockchainFolderName": resolved.name})
+    return resolved
+
+
+def load_vault_folder() -> Path:
+    raw = str(load_disk_session().get("blockchainFolder") or "").strip()
+    if raw:
+        folder = Path(raw).expanduser()
+        if folder.is_dir():
+            return folder.resolve()
+    return default_vault_dir()
+
+
+def vault_key(block: dict) -> bytes:
+    return hashlib.sha256(str(block.get("hash") or "").encode("utf-8")).digest()
+
+
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    if not key:
+        return data
+    return bytes(value ^ key[index % len(key)] for index, value in enumerate(data))
+
+
+def vault_filename(block: dict, filename: str) -> str:
+    height = as_int(block.get("height"), 0)
+    stem = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in Path(filename).stem) or "plate"
+    return f"{height:04d}-{stem}{VAULT_EXT}"
+
+
+def lock_bytes(plain: bytes, block: dict, filename: str, title: str, caption: str, mime: str) -> bytes:
+    header = json.dumps(
+        {
+            "v": 1,
+            "height": as_int(block.get("height"), 0),
+            "file": filename or "",
+            "title": title or "",
+            "caption": caption or "",
+            "imageHash": hashlib.sha256(plain).hexdigest(),
+            "mime": mime or "application/octet-stream",
+        },
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    cipher = xor_bytes(plain, vault_key(block))
+    return VAULT_MAGIC + bytes([1]) + len(header).to_bytes(4, "big") + header + cipher
+
+
+def parse_envelope(data: bytes) -> tuple[dict, bytes] | None:
+    if len(data) < 9 or data[:4] != VAULT_MAGIC or data[4] != 1:
+        return None
+    size = int.from_bytes(data[5:9], "big")
+    if size < 2 or 9 + size > len(data):
+        return None
+    try:
+        header = json.loads(data[9 : 9 + size].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(header, dict):
+        return None
+    return header, data[9 + size :]
+
+
+def block_at_height(blocks: list[dict], height: int) -> dict | None:
+    for block in blocks:
+        if as_int(block.get("height"), -1) == height:
+            return block
+    return None
+
+
+def unlock_bytes(data: bytes, blocks: list[dict] | None = None) -> tuple[dict, bytes] | None:
+    parsed = parse_envelope(data)
+    if not parsed:
+        return None
+    header, cipher = parsed
+    chain = blocks if blocks is not None else load_chain()
+    if not verify_chain(chain):
+        return None
+    block = block_at_height(chain, as_int(header.get("height"), -1))
+    if not block:
+        return None
+    plain = xor_bytes(cipher, vault_key(block))
+    if hashlib.sha256(plain).hexdigest() != str(header.get("imageHash") or ""):
+        return None
+    return header, plain
+
+
+def save_locked_plate(plain: bytes, block: dict, filename: str, title: str, caption: str, mime: str) -> str:
+    folder = load_vault_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    name = vault_filename(block, filename)
+    (folder / name).write_bytes(lock_bytes(plain, block, filename, title, caption, mime))
+    return name
+
+
+def is_vault_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.suffix.lower() in VAULT_EXTS:
+        return True
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) == VAULT_MAGIC
+    except OSError:
+        return False
+
+
+def vault_photo(name: str, header: dict, index: int = 0) -> dict:
+    src = "/media/vault/" + quote(name)
+    title = str(header.get("title") or Path(str(header.get("file") or name)).stem or "Plate")
+    return {
+        "id": f"vault/{name}",
+        "title": title,
+        "photographer": "Aperture chain",
+        "location": str(header.get("caption") or "Unlocked plate"),
+        "year": datetime.now().year,
+        "category": "blockchain",
+        "src": src,
+        "thumb": src,
+        "hero": src,
+        "local": True,
+        "featured": index == 0,
+        "height": as_int(header.get("height"), 0),
+    }
+
+
+def list_vault(folder: Path | None = None) -> dict:
+    root = folder if folder is not None else load_vault_folder()
+    chain = load_chain()
+    valid = verify_chain(chain)
+    files: list[dict] = []
+    photos: list[dict] = []
+    if root.is_dir():
+        for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+            if not is_vault_file(path):
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+            parsed = parse_envelope(data)
+            header = parsed[0] if parsed else {"file": path.name, "title": path.stem}
+            unlocked = unlock_bytes(data, chain) if valid else None
+            entry = {
+                "name": path.name,
+                "height": as_int(header.get("height"), 0),
+                "title": str(header.get("title") or Path(str(header.get("file") or path.name)).stem),
+                "caption": str(header.get("caption") or ""),
+                "file": str(header.get("file") or path.name),
+                "unlocked": bool(unlocked),
+                "src": "/media/vault/" + quote(path.name) if unlocked else "",
+                "error": "" if unlocked else ("locked" if parsed else "undecodable"),
+            }
+            files.append(entry)
+            if unlocked:
+                photos.append(vault_photo(path.name, unlocked[0], len(photos)))
+    return {
+        "ok": True,
+        "valid": valid,
+        "folder": root.name,
+        "path": str(root),
+        "height": as_int(chain[-1].get("height"), 0) if chain else 0,
+        "files": files,
+        "photos": photos,
+        "blocks": chain,
+    }
+
+
 def chrome_profile_dir() -> Path:
     path = cache_home() / "chrome-profile"
     path.mkdir(parents=True, exist_ok=True)
@@ -517,6 +698,12 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             blocks = load_chain()
             self._send_json({"ok": True, "valid": verify_chain(blocks), "blocks": blocks})
             return
+        if parsed.path == "/api/vault":
+            self._send_json(list_vault())
+            return
+        if parsed.path.startswith("/media/vault/"):
+            self._send_vault_media(unquote(parsed.path[len("/media/vault/") :]))
+            return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
             return
@@ -537,6 +724,18 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             )
             blocks = load_chain()
             self._send_json({"ok": True, "valid": verify_chain(blocks), "block": block, "blocks": blocks})
+            return
+        if parsed.path == "/api/vault/open":
+            body = self._read_json()
+            folder = Path(str(body.get("path") or "")).expanduser()
+            if not folder.is_dir():
+                self.send_error(404, "Folder not found")
+                return
+            remember_vault(folder)
+            self._send_json(list_vault(folder.resolve()))
+            return
+        if parsed.path == "/api/vault/lock":
+            self._lock_vault_upload()
             return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
@@ -618,8 +817,16 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         (posts / f"{stamp}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         image_hash = hashlib.sha256(payload).hexdigest()
         block = append_block(meta["title"], meta["caption"], image_path.name, image_hash)
+        vault_name = save_locked_plate(payload, block, image_path.name, meta["title"], meta["caption"], ctype)
         self._send_json(
-            {"ok": True, "file": image_path.name, "caption": meta["caption"], "block": block, "valid": verify_chain()}
+            {
+                "ok": True,
+                "file": image_path.name,
+                "caption": meta["caption"],
+                "block": block,
+                "valid": verify_chain(),
+                "vault": vault_name,
+            }
         )
 
     def _parse_multipart(self, content_type: str, raw: bytes) -> tuple[dict, dict]:
@@ -645,6 +852,62 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             else:
                 fields[str(name)] = payload.decode("utf-8", "replace")
         return fields, files
+
+    def _lock_vault_upload(self) -> None:
+        content_type = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" not in content_type:
+            self.send_error(400, "Expected multipart form")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self.send_error(400, "Invalid plate")
+            return
+        fields, files = self._parse_multipart(content_type, self.rfile.read(length))
+        plate = files.get("plate") or files.get("file")
+        if not plate or not plate[1]:
+            self.send_error(400, "Missing plate")
+            return
+        filename, payload, ctype = plate
+        chain = load_chain()
+        block = chain[-1] if chain else genesis_block()
+        name = save_locked_plate(
+            payload,
+            block,
+            filename,
+            fields.get("title") or "",
+            fields.get("caption") or "",
+            ctype,
+        )
+        payload_out = list_vault()
+        payload_out["vault"] = name
+        payload_out["block"] = block
+        self._send_json(payload_out)
+
+    def _send_vault_media(self, rel: str) -> None:
+        folder = load_vault_folder()
+        name = Path(rel).name
+        path = (folder / name).resolve()
+        if not safe_under(folder, path) or not path.is_file():
+            self.send_error(404, "Not found")
+            return
+        try:
+            unlocked = unlock_bytes(path.read_bytes())
+        except OSError:
+            unlocked = None
+        if not unlocked:
+            self.send_error(404, "Locked")
+            return
+        header, plain = unlocked
+        ctype = str(header.get("mime") or mimetypes.guess_type(str(header.get("file") or name))[0] or "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(plain)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(plain)
 
     def _read_json(self) -> dict:
         try:

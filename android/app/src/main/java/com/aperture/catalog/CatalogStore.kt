@@ -360,6 +360,267 @@ class CatalogStore(private val context: Context) {
             .put("blocks", blocks)
     }
 
+    fun vaultResponse(): WebResourceResponse {
+        return json(vaultPayload())
+    }
+
+    fun vaultMediaResponse(rel: String): WebResourceResponse {
+        val name = rel.substringAfterLast('/').substringAfterLast('\\')
+        val packed = readVaultFile(name) ?: return notFound()
+        val unlocked = unlockBytes(packed, chainArray()) ?: return notFound()
+        val mime = unlocked.first.optString("mime").ifBlank { mimeFor(unlocked.first.optString("file").ifBlank { name }) }
+        return WebResourceResponse(
+            mime,
+            null,
+            200,
+            "OK",
+            mapOf("Cache-Control" to "no-store", "Content-Length" to unlocked.second.size.toString()),
+            ByteArrayInputStream(unlocked.second),
+        )
+    }
+
+    fun openVaultTree(uri: Uri) {
+        context.contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+        )
+        val name = DocumentFile.fromTreeUri(context, uri)?.name ?: "blockchain"
+        prefs.edit()
+            .putString(KEY_VAULT, uri.toString())
+            .putString(KEY_VAULT_NAME, name)
+            .apply()
+    }
+
+    fun chainLock(url: String, filename: String, blockJson: String): JSONObject {
+        val block = try {
+            JSONObject(blockJson)
+        } catch (_: Exception) {
+            return JSONObject().put("ok", false)
+        }
+        val dest = File(context.cacheDir, "vault-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
+        if (!exportToFile(url, dest) { }) {
+            return JSONObject().put("ok", false)
+        }
+        val plain = dest.readBytes()
+        dest.delete()
+        val name = vaultFilename(block, filename)
+        val packed = lockBytes(
+            plain,
+            block,
+            filename,
+            block.optString("title"),
+            block.optString("caption"),
+            mimeFor(filename),
+        )
+        writeVaultFile(name, packed)
+        return vaultPayload().put("vault", name).put("block", block)
+    }
+
+    private fun vaultPayload(): JSONObject {
+        val blocks = chainArray()
+        val valid = verifyChain(blocks)
+        val files = JSONArray()
+        val photos = JSONArray()
+        for (entry in listVaultEntries()) {
+            val parsed = parseEnvelope(entry.second)
+            val header = parsed?.first ?: JSONObject().put("file", entry.first).put("title", entry.first.substringBeforeLast('.'))
+            val unlocked = if (valid) unlockBytes(entry.second, blocks) else null
+            val item = JSONObject()
+                .put("name", entry.first)
+                .put("height", header.optInt("height"))
+                .put("title", header.optString("title").ifBlank { header.optString("file").substringBeforeLast('.').ifBlank { entry.first } })
+                .put("caption", header.optString("caption"))
+                .put("file", header.optString("file").ifBlank { entry.first })
+                .put("unlocked", unlocked != null)
+                .put("src", if (unlocked != null) "/media/vault/" + Uri.encode(entry.first) else "")
+                .put("error", if (unlocked != null) "" else if (parsed != null) "locked" else "undecodable")
+            files.put(item)
+            if (unlocked != null) {
+                val src = "/media/vault/" + Uri.encode(entry.first)
+                val title = unlocked.first.optString("title").ifBlank { unlocked.first.optString("file").substringBeforeLast('.').ifBlank { entry.first } }
+                photos.put(
+                    JSONObject()
+                        .put("id", "vault/${entry.first}")
+                        .put("title", title)
+                        .put("photographer", "Aperture chain")
+                        .put("location", unlocked.first.optString("caption").ifBlank { "Unlocked plate" })
+                        .put("year", Calendar.getInstance().get(Calendar.YEAR))
+                        .put("category", "blockchain")
+                        .put("src", src)
+                        .put("thumb", src)
+                        .put("hero", src)
+                        .put("local", true)
+                        .put("featured", photos.length() == 0)
+                        .put("height", unlocked.first.optInt("height")),
+                )
+            }
+        }
+        val tip = if (blocks.length() > 0) blocks.getJSONObject(blocks.length() - 1).optInt("height") else 0
+        val folder = vaultFolderName()
+        return JSONObject()
+            .put("ok", true)
+            .put("valid", valid)
+            .put("folder", folder)
+            .put("path", prefs.getString(KEY_VAULT, "").orEmpty().ifBlank { defaultVaultDir().absolutePath })
+            .put("height", tip)
+            .put("files", files)
+            .put("photos", photos)
+            .put("blocks", blocks)
+    }
+
+    private fun vaultFolderName(): String {
+        val named = prefs.getString(KEY_VAULT_NAME, "").orEmpty()
+        if (named.isNotBlank()) return named
+        val raw = prefs.getString(KEY_VAULT, "").orEmpty()
+        if (raw.isNotBlank()) return DocumentFile.fromTreeUri(context, Uri.parse(raw))?.name ?: "blockchain"
+        return "blockchain"
+    }
+
+    private fun defaultVaultDir(): File {
+        val dir = File(context.filesDir, "blockchain")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun listVaultEntries(): List<Pair<String, ByteArray>> {
+        val out = mutableListOf<Pair<String, ByteArray>>()
+        val raw = prefs.getString(KEY_VAULT, "").orEmpty()
+        if (raw.isNotBlank()) {
+            val root = DocumentFile.fromTreeUri(context, Uri.parse(raw))
+            if (root != null) {
+                collectVaultFiles(root, out)
+                return out.sortedBy { it.first.lowercase(Locale.US) }
+            }
+        }
+        defaultVaultDir().listFiles()?.sortedBy { it.name.lowercase(Locale.US) }?.forEach { file ->
+            if (file.isFile && isVaultName(file.name)) {
+                out += file.name to file.readBytes()
+            }
+        }
+        return out
+    }
+
+    private fun collectVaultFiles(dir: DocumentFile, out: MutableList<Pair<String, ByteArray>>) {
+        for (child in dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }) {
+            val name = child.name ?: continue
+            if (child.isDirectory) {
+                collectVaultFiles(child, out)
+                continue
+            }
+            if (!isVaultName(name)) continue
+            val bytes = readUriBytes(child.uri) ?: continue
+            out += name to bytes
+        }
+    }
+
+    private fun isVaultName(name: String): Boolean {
+        val lower = name.lowercase(Locale.US)
+        return lower.endsWith(".apc") || lower.endsWith(".aplate")
+    }
+
+    private fun readVaultFile(name: String): ByteArray? {
+        listVaultEntries().firstOrNull { it.first == name }?.let { return it.second }
+        val local = File(defaultVaultDir(), name)
+        return if (local.isFile) local.readBytes() else null
+    }
+
+    private fun writeVaultFile(name: String, bytes: ByteArray) {
+        val raw = prefs.getString(KEY_VAULT, "").orEmpty()
+        if (raw.isNotBlank()) {
+            val root = DocumentFile.fromTreeUri(context, Uri.parse(raw))
+            if (root != null) {
+                root.findFile(name)?.delete()
+                val created = root.createFile("application/octet-stream", name) ?: return
+                context.contentResolver.openOutputStream(created.uri)?.use { it.write(bytes) }
+                return
+            }
+        }
+        File(defaultVaultDir(), name).writeBytes(bytes)
+    }
+
+    private fun readUriBytes(uri: Uri): ByteArray? {
+        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }
+
+    private fun vaultFilename(block: JSONObject, filename: String): String {
+        val height = block.optInt("height")
+        val stem = filename.substringAfterLast('/').substringBeforeLast('.').replace(Regex("[^A-Za-z0-9._-]+"), "-").ifBlank { "plate" }
+        return "%04d-%s.apc".format(Locale.US, height, stem)
+    }
+
+    private fun xorBytes(data: ByteArray, key: ByteArray): ByteArray {
+        if (key.isEmpty()) return data
+        return ByteArray(data.size) { index -> (data[index].toInt() xor key[index % key.size].toInt()).toByte() }
+    }
+
+    private fun vaultKey(block: JSONObject): ByteArray {
+        return MessageDigest.getInstance("SHA-256").digest(block.optString("hash").toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun lockBytes(
+        plain: ByteArray,
+        block: JSONObject,
+        filename: String,
+        title: String,
+        caption: String,
+        mime: String,
+    ): ByteArray {
+        val imageHash = MessageDigest.getInstance("SHA-256").digest(plain).joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xFF)
+        }
+        val header = JSONObject()
+            .put("v", 1)
+            .put("height", block.optInt("height"))
+            .put("file", filename)
+            .put("title", title)
+            .put("caption", caption)
+            .put("imageHash", imageHash)
+            .put("mime", mime.ifBlank { "application/octet-stream" })
+            .toString()
+            .toByteArray(StandardCharsets.UTF_8)
+        val cipher = xorBytes(plain, vaultKey(block))
+        val out = ByteArray(9 + header.size + cipher.size)
+        VAULT_MAGIC.copyInto(out, 0)
+        out[4] = 1
+        val n = header.size
+        out[5] = (n ushr 24).toByte()
+        out[6] = (n ushr 16).toByte()
+        out[7] = (n ushr 8).toByte()
+        out[8] = n.toByte()
+        header.copyInto(out, 9)
+        cipher.copyInto(out, 9 + header.size)
+        return out
+    }
+
+    private fun parseEnvelope(data: ByteArray): Pair<JSONObject, ByteArray>? {
+        if (data.size < 9 || !data.copyOfRange(0, 4).contentEquals(VAULT_MAGIC) || data[4].toInt() != 1) return null
+        val n = ((data[5].toInt() and 0xFF) shl 24) or
+            ((data[6].toInt() and 0xFF) shl 16) or
+            ((data[7].toInt() and 0xFF) shl 8) or
+            (data[8].toInt() and 0xFF)
+        if (n < 2 || 9 + n > data.size) return null
+        return try {
+            val header = JSONObject(String(data.copyOfRange(9, 9 + n), StandardCharsets.UTF_8))
+            header to data.copyOfRange(9 + n, data.size)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun unlockBytes(data: ByteArray, blocks: JSONArray): Pair<JSONObject, ByteArray>? {
+        val parsed = parseEnvelope(data) ?: return null
+        if (!verifyChain(blocks)) return null
+        val height = parsed.first.optInt("height", -1)
+        val block = (0 until blocks.length()).map { blocks.getJSONObject(it) }.firstOrNull { it.optInt("height") == height }
+            ?: return null
+        val plain = xorBytes(parsed.second, vaultKey(block))
+        val digest = MessageDigest.getInstance("SHA-256").digest(plain).joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xFF)
+        }
+        if (digest != parsed.first.optString("imageHash")) return null
+        return parsed.first to plain
+    }
+
     private fun chainArray(): JSONArray {
         val raw = prefs.getString(KEY_CHAIN, "").orEmpty()
         if (raw.isNotBlank()) {
@@ -629,10 +890,13 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val KEY_CHAIN = "chain"
+        private const val KEY_VAULT = "blockchainFolder"
+        private const val KEY_VAULT_NAME = "blockchainFolderName"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
         private const val CHAIN_DIFFICULTY = 3
         private const val GENESIS_PREV = "0000000000000000000000000000000000000000000000000000000000000000"
+        private val VAULT_MAGIC = byteArrayOf(0x41, 0x50, 0x43, 0x48)
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

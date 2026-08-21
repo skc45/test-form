@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownload: Pair<String, String>? = null
+    private var pickingVault = false
 
     private val requestWrite = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -43,9 +44,16 @@ class MainActivity : AppCompatActivity() {
     private val pickFolder = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
+        val vault = pickingVault
+        pickingVault = false
         if (uri != null) {
-            store.openTree(uri)
-            notifyCatalog()
+            if (vault) {
+                store.openVaultTree(uri)
+                notifyVault()
+            } else {
+                store.openTree(uri)
+                notifyCatalog()
+            }
         }
     }
 
@@ -103,6 +111,11 @@ class MainActivity : AppCompatActivity() {
                             store.cacheResponse()
                         }
                         path == "/api/chain" && request.method == "GET" -> store.chainResponse()
+                        path == "/api/vault" && request.method == "GET" -> store.vaultResponse()
+                        path.startsWith("/media/vault/") -> {
+                            val rel = Uri.decode(path.removePrefix("/media/vault/"))
+                            store.vaultMediaResponse(rel)
+                        }
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
                             val plate = url.getQueryParameter("p")?.toIntOrNull() ?: 0
@@ -153,10 +166,18 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun notifyVault() {
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new Event('aperture-native-vault'))",
+            null,
+        )
+    }
+
     inner class ApertureBridge {
         @JavascriptInterface
         fun openFolder() {
             runOnUiThread {
+                pickingVault = false
                 pickFolder.launch(null)
             }
         }
@@ -176,6 +197,7 @@ class MainActivity : AppCompatActivity() {
                     intArrayOf()
                 }
                 if (!store.openRecents(indexes)) {
+                    pickingVault = false
                     pickFolder.launch(null)
                 } else {
                     notifyCatalog()
@@ -210,6 +232,19 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun chainAppend(title: String, caption: String, file: String, imageHash: String): String {
             return store.chainAppend(title, caption, file, imageHash).toString()
+        }
+
+        @JavascriptInterface
+        fun chainLock(url: String, filename: String, blockJson: String): String {
+            return store.chainLock(url, filename, blockJson).toString()
+        }
+
+        @JavascriptInterface
+        fun openBlockchainFolder() {
+            runOnUiThread {
+                pickingVault = true
+                pickFolder.launch(null)
+            }
         }
     }
 

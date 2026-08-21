@@ -27,6 +27,7 @@ const state = {
   recents: [],
   selectedIds: [],
   postPhoto: null,
+  vaultHandle: null,
 };
 
 const els = {
@@ -72,8 +73,13 @@ const els = {
   postSend: document.getElementById("postSend"),
   chainLedger: document.getElementById("chainLedger"),
   chainList: document.getElementById("chainList"),
+  chainFiles: document.getElementById("chainFiles"),
   chainStatus: document.getElementById("chainStatus"),
+  chainVaultStatus: document.getElementById("chainVaultStatus"),
   chainBtn: document.getElementById("chainBtn"),
+  chainUnlock: document.getElementById("chainUnlock"),
+  vaultInput: document.getElementById("vaultInput"),
+  vaultFolderInput: document.getElementById("vaultFolderInput"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -84,6 +90,8 @@ let downloadTimer = 0;
 let recentSlideTimer = 0;
 let downloadBusy = false;
 let postBusy = false;
+let chainMonitorTimer = 0;
+const localVault = [];
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 
@@ -583,6 +591,12 @@ async function persistCatalogAsync() {
     const rendered = [...(els.recentTabs?.querySelectorAll("[data-recent]") || [])].map((el) => el.dataset.id);
     const nextIds = recents.map((item) => item.id);
     if (rendered.join("\0") !== nextIds.join("\0")) renderRecentSelection();
+    return;
+  }
+  if (state.source === "blockchain") {
+    if (hint) {
+      hint.innerHTML = `Unlocked vault · ${escapeHtml(state.folderName || "blockchain")} · <kbd>B</kbd> monitor`;
+    }
     return;
   }
   if (hint) {
@@ -1313,6 +1327,325 @@ function cacheChainBlocks(blocks) {
   }
 }
 
+function photoFromUnlocked(name, header, bytes) {
+  const mime = header.mime || "image/jpeg";
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  state.blobUrls.push(url);
+  return {
+    id: `vault-${name}`,
+    title: header.title || String(header.file || name).replace(/\.[^.]+$/, ""),
+    photographer: "Aperture chain",
+    location: header.caption || "Unlocked plate",
+    year: new Date().getFullYear(),
+    category: "blockchain",
+    src: url,
+    thumb: url,
+    hero: url,
+    local: true,
+    height: Number(header.height || 0),
+  };
+}
+
+async function listingFromPacked(items, blocks) {
+  const files = [];
+  for (const item of items) {
+    const parsed = chain.parseEnvelope(item.bytes);
+    const header = parsed?.header || { file: item.name, title: item.name.replace(/\.[^.]+$/, "") };
+    const unlocked = await chain.unlockBytes(item.bytes, blocks);
+    files.push({
+      name: item.name,
+      height: Number(header.height || 0),
+      title: header.title || String(header.file || item.name).replace(/\.[^.]+$/, ""),
+      caption: header.caption || "",
+      file: header.file || item.name,
+      unlocked: Boolean(unlocked),
+      src: "",
+      error: unlocked ? "" : parsed ? "locked" : "undecodable",
+      header: unlocked?.header || header,
+      bytes: unlocked?.bytes || null,
+    });
+  }
+  return { files, photos: [] };
+}
+
+async function fetchVault() {
+  const blocks = await loadChainBlocks();
+  const valid = await chain.verifyChain(blocks);
+  try {
+    const response = await fetch("/api/vault", { headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.ok !== false) {
+        return {
+          ...data,
+          valid: data.valid !== false && valid,
+          blocks: Array.isArray(data.blocks) && data.blocks.length ? data.blocks : blocks,
+        };
+      }
+    }
+  } catch {
+    /* static hosts have no vault API */
+  }
+  const local = await listingFromPacked(localVault, blocks);
+  return {
+    ok: true,
+    valid,
+    folder: "blockchain",
+    path: "",
+    height: Number(blocks[blocks.length - 1]?.height || 0),
+    files: local.files,
+    photos: local.photos,
+    blocks,
+  };
+}
+
+function rememberLocalVault(name, bytes) {
+  const packed = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const index = localVault.findIndex((item) => item.name === name);
+  if (index >= 0) localVault[index] = { name, bytes: packed };
+  else localVault.push({ name, bytes: packed });
+}
+
+async function lockPlateInVault(blob, filename, title, caption, block, src = "") {
+  if (!block) return null;
+  if (window.ApertureAndroid?.chainLock) {
+    try {
+      const data = JSON.parse(window.ApertureAndroid.chainLock(src, filename, JSON.stringify(block)) || "{}");
+      return data.ok === false ? null : data;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!blob) return null;
+  try {
+    const body = new FormData();
+    body.append("title", title);
+    body.append("caption", caption);
+    body.append("plate", blob instanceof Blob ? blob : new Blob([blob]), filename);
+    const response = await fetch("/api/vault/lock", { method: "POST", body });
+    if (response.ok) return await response.json();
+  } catch {
+    /* encode locally */
+  }
+  const bytes = new Uint8Array(await (blob instanceof Blob ? blob.arrayBuffer() : blob));
+  const packed = await chain.lockBytes(bytes, block, {
+    file: filename,
+    title,
+    caption,
+    mime: blob.type || "application/octet-stream",
+  });
+  rememberLocalVault(chain.vaultName(block, filename), packed);
+  if (state.vaultHandle?.getFileHandle) {
+    try {
+      const fileHandle = await state.vaultHandle.getFileHandle(chain.vaultName(block, filename), { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(packed);
+      await writable.close();
+    } catch {
+      /* read-only handle */
+    }
+  }
+  return { ok: true, vault: chain.vaultName(block, filename) };
+}
+
+async function collectApcFromHandle(handle, prefix = "") {
+  const files = [];
+  for await (const [name, child] of handle.entries()) {
+    const rel = prefix ? `${prefix}/${name}` : name;
+    if (child.kind === "directory") {
+      files.push(...(await collectApcFromHandle(child, rel)));
+      continue;
+    }
+    const file = await child.getFile();
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    if (chain.isApcName(name) || (head[0] === 0x41 && head[1] === 0x50 && head[2] === 0x43 && head[3] === 0x48)) {
+      files.push(file);
+    }
+  }
+  return files;
+}
+
+async function unlockPackedFiles(fileList, folderName = "blockchain") {
+  const blocks = await loadChainBlocks();
+  const packed = [];
+  for (const file of fileList) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!chain.parseEnvelope(bytes)) continue;
+    const name = file.name || `plate-${packed.length + 1}.apc`;
+    rememberLocalVault(name, bytes);
+    packed.push({ name, bytes });
+  }
+  const listing = await listingFromPacked(packed, blocks);
+  listing.folder = folderName;
+  listing.valid = await chain.verifyChain(blocks);
+  listing.blocks = blocks;
+  listing.photos = [];
+  return listing;
+}
+
+function photosFromListing(listing) {
+  const ready = (listing.photos || []).filter((photo) => photo?.src);
+  if (ready.length) return ready;
+  return (listing.files || [])
+    .filter((item) => item.unlocked && item.bytes)
+    .map((item) => photoFromUnlocked(item.name, item.header, item.bytes));
+}
+
+function openUnlockedCatalog(listing) {
+  const existing = (listing.photos || []).filter((photo) => photo?.src);
+  revokeBlobs();
+  const photos = (existing.length ? existing : photosFromListing({ ...listing, photos: [] })).map((photo, index) => ({
+    ...photo,
+    featured: index === 0,
+  }));
+  if (!photos.length) return false;
+  setCatalog(photos, {
+    folderName: listing.folder || "blockchain",
+    folderPath: listing.path || "",
+    source: "blockchain",
+    handle: state.vaultHandle,
+  });
+  return true;
+}
+
+async function renderChainMonitor(listing) {
+  if (!els.chainList) return;
+  const data = listing || (await fetchVault());
+  const blocks = Array.isArray(data.blocks) && data.blocks.length ? data.blocks : await loadChainBlocks();
+  const valid = data.valid !== false && (await chain.verifyChain(blocks));
+  const tip = blocks[blocks.length - 1];
+  if (els.chainStatus) {
+    els.chainStatus.textContent = valid
+      ? `Live · height ${Number(tip?.height || 0)} · ${blocks.length} block${blocks.length === 1 ? "" : "s"} · SHA-256`
+      : "Chain failed verification — plates stay locked";
+  }
+  const files = data.files || [];
+  const unlocked = files.filter((item) => item.unlocked).length;
+  if (els.chainVaultStatus) {
+    if (!files.length) {
+      els.chainVaultStatus.textContent = data.path
+        ? `Vault · ${data.folder || "blockchain"} · empty`
+        : "Unlock a blockchain folder to decode sealed plates.";
+    } else {
+      els.chainVaultStatus.textContent = `${unlocked} of ${files.length} plate${files.length === 1 ? "" : "s"} decoded${
+        data.folder ? ` · ${data.folder}` : ""
+      }`;
+    }
+  }
+  els.chainList.innerHTML = blocks
+    .slice()
+    .reverse()
+    .map(
+      (block) => `
+      <li class="chain-block${Number(block.height) === 0 ? " is-genesis" : ""}">
+        <strong>${Number(block.height) === 0 ? "Genesis" : `Block ${block.height}`}${block.title ? ` · ${escapeHtml(block.title)}` : ""}</strong>
+        <span>${escapeHtml(block.caption || "No caption")}</span>
+        <span>${chain.shortHash(block.hash)} ← ${chain.shortHash(block.prevHash)}</span>
+      </li>`
+    )
+    .join("");
+  if (els.chainFiles) {
+    els.chainFiles.hidden = files.length === 0;
+    els.chainFiles.innerHTML = files
+      .map(
+        (item) => `
+        <li class="chain-block${item.unlocked ? " is-unlocked" : " is-locked"}" data-vault="${escapeHtml(item.name)}" ${
+          item.unlocked ? `data-open="${escapeHtml(item.src || item.photo?.id || "")}"` : ""
+        }>
+          <strong>${escapeHtml(item.title || item.file || item.name)}<span class="chain-flag">${
+            item.unlocked ? "Unlocked" : "Locked"
+          }</span></strong>
+          <span>${escapeHtml(item.caption || item.file || item.name)}</span>
+          <span>Block ${Number(item.height || 0)}</span>
+        </li>`
+      )
+      .join("");
+  }
+}
+
+async function openChainLedger() {
+  if (!els.chainLedger) return;
+  els.chainLedger.hidden = false;
+  await renderChainMonitor();
+  window.clearInterval(chainMonitorTimer);
+  chainMonitorTimer = window.setInterval(() => {
+    if (els.chainLedger?.hidden) {
+      window.clearInterval(chainMonitorTimer);
+      return;
+    }
+    renderChainMonitor();
+  }, 2500);
+}
+
+function closeChainLedger() {
+  if (!els.chainLedger) return;
+  els.chainLedger.hidden = true;
+  window.clearInterval(chainMonitorTimer);
+}
+
+async function unlockBlockchainFolder() {
+  if (els.chainUnlock) els.chainUnlock.disabled = true;
+  if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Unlocking…";
+  try {
+    const existing = await fetchVault();
+    if ((existing.files || []).length) {
+      await renderChainMonitor(existing);
+      if (openUnlockedCatalog(existing)) closeChainLedger();
+      else if (els.chainVaultStatus) {
+        els.chainVaultStatus.textContent = existing.valid
+          ? "No decodable plates in the blockchain folder."
+          : "Chain failed verification — plates stay locked";
+      }
+      return;
+    }
+    if (window.ApertureAndroid?.openBlockchainFolder) {
+      window.ApertureAndroid.openBlockchainFolder();
+      return;
+    }
+    if (window.showDirectoryPicker) {
+      try {
+        const dir = await window.showDirectoryPicker({ mode: "readwrite" });
+        state.vaultHandle = dir;
+        const files = await collectApcFromHandle(dir);
+        const listing = await unlockPackedFiles(files, dir.name || "blockchain");
+        listing.path = dir.name;
+        await renderChainMonitor(listing);
+        if (openUnlockedCatalog(listing)) closeChainLedger();
+        else if (els.chainVaultStatus) {
+          els.chainVaultStatus.textContent = listing.valid
+            ? "No decodable plates in that folder."
+            : "Chain failed verification — plates stay locked";
+        }
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    els.vaultFolderInput?.click();
+  } finally {
+    if (els.chainUnlock) els.chainUnlock.disabled = false;
+  }
+}
+
+async function openVaultFile(name, src) {
+  if (src && state.source === "blockchain") {
+    const match = state.photos.find((photo) => photo.id === src || photo.src === src || photo.id === `vault/${name}` || photo.id === `vault-${name}`);
+    if (match) {
+      closeChainLedger();
+      openViewer(match.id);
+      return;
+    }
+  }
+  const listing = await fetchVault();
+  await renderChainMonitor(listing);
+  if (!openUnlockedCatalog(listing)) return;
+  closeChainLedger();
+  const id = `vault/${name}`;
+  const localId = `vault-${name}`;
+  const photo = state.photos.find((item) => item.id === id || item.id === localId || item.id === src);
+  if (photo) openViewer(photo.id);
+}
+
 async function sealPostBlock(photo, caption, filename, blob) {
   setPostProgress(86, "Sealing block…");
   let imageHash = "";
@@ -1362,40 +1695,6 @@ async function sealPostBlock(photo, caption, filename, blob) {
   blocks.push(block);
   cacheChainBlocks(blocks);
   return block;
-}
-
-async function renderChainLedger() {
-  if (!els.chainList) return;
-  const blocks = await loadChainBlocks();
-  const valid = await chain.verifyChain(blocks);
-  if (els.chainStatus) {
-    els.chainStatus.textContent = valid
-      ? `${blocks.length} block${blocks.length === 1 ? "" : "s"} · SHA-256 · difficulty ${chain.DIFFICULTY}`
-      : "Chain failed verification";
-  }
-  els.chainList.innerHTML = blocks
-    .slice()
-    .reverse()
-    .map(
-      (block) => `
-      <li class="chain-block${Number(block.height) === 0 ? " is-genesis" : ""}">
-        <strong>${Number(block.height) === 0 ? "Genesis" : `Block ${block.height}`}${block.title ? ` · ${escapeHtml(block.title)}` : ""}</strong>
-        <span>${escapeHtml(block.caption || "No caption")}</span>
-        <span>${chain.shortHash(block.hash)} ← ${chain.shortHash(block.prevHash)}</span>
-      </li>`
-    )
-    .join("");
-}
-
-async function openChainLedger() {
-  if (!els.chainLedger) return;
-  els.chainLedger.hidden = false;
-  await renderChainLedger();
-}
-
-function closeChainLedger() {
-  if (!els.chainLedger) return;
-  els.chainLedger.hidden = true;
 }
 
 function setPostProgress(pct, label) {
@@ -1485,7 +1784,8 @@ async function sendPost(event) {
   try {
     if (window.ApertureAndroid?.share) {
       await nativeShare(photo.src, filename, caption);
-      await sealPostBlock(photo, caption, filename, null);
+      const block = await sealPostBlock(photo, caption, filename, null);
+      await lockPlateInVault(null, filename, photo.title || filename, caption, block, photo.src);
       setPostProgress(100, "Sent");
       window.setTimeout(closePostForm, 500);
       return;
@@ -1497,8 +1797,11 @@ async function sendPost(event) {
         setPostProgress(Math.max(12, pct), `Sending… ${pct}%`);
       });
       if (result?.ok !== false) {
-        if (result.block) cacheChainBlocks((await loadChainBlocks()));
-        else await sealPostBlock(photo, caption, filename, blob);
+        if (result.block) cacheChainBlocks(await loadChainBlocks());
+        else {
+          const block = await sealPostBlock(photo, caption, filename, blob);
+          await lockPlateInVault(blob, filename, photo.title || filename, caption, block, photo.src);
+        }
         setPostProgress(100, "Sent");
         window.setTimeout(closePostForm, 700);
         return;
@@ -1507,7 +1810,8 @@ async function sendPost(event) {
       /* fall through to share sheet */
     }
     await postViaShareApi(file, caption, photo.title || "Aperture");
-    await sealPostBlock(photo, caption, filename, blob);
+    const block = await sealPostBlock(photo, caption, filename, blob);
+    await lockPlateInVault(blob, filename, photo.title || filename, caption, block, photo.src);
     setPostProgress(100, "Sent");
     window.setTimeout(closePostForm, 400);
   } catch {
@@ -1519,6 +1823,12 @@ async function sendPost(event) {
 }
 
 async function ingestDataTransfer(transfer) {
+  const dropped = [...(transfer.files || [])];
+  if (dropped.length && dropped.every((file) => chain.isApcName(file.name))) {
+    const listing = await unlockPackedFiles(dropped, guessFolderName(dropped) || "blockchain");
+    await renderChainMonitor(listing);
+    if (openUnlockedCatalog(listing)) return;
+  }
   const items = [...(transfer.items || [])];
   const entries = items.map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
   if (entries.length) {
@@ -1616,8 +1926,35 @@ async function wire() {
   });
   els.chainBtn?.addEventListener("click", openChainLedger);
   document.getElementById("chainClose")?.addEventListener("click", closeChainLedger);
+  els.chainUnlock?.addEventListener("click", unlockBlockchainFolder);
+  els.chainFiles?.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-vault]");
+    if (!row || row.classList.contains("is-locked")) return;
+    openVaultFile(row.dataset.vault, row.dataset.open);
+  });
   els.chainLedger?.addEventListener("click", (event) => {
     if (event.target === els.chainLedger) closeChainLedger();
+  });
+  els.vaultInput?.addEventListener("change", async () => {
+    const files = [...(els.vaultInput.files || [])];
+    els.vaultInput.value = "";
+    if (!files.length) return;
+    const listing = await unlockPackedFiles(files, "blockchain");
+    await renderChainMonitor(listing);
+    if (openUnlockedCatalog(listing)) closeChainLedger();
+  });
+  els.vaultFolderInput?.addEventListener("change", async () => {
+    const files = [...(els.vaultFolderInput.files || [])];
+    const folderName = guessFolderName(files) || "blockchain";
+    els.vaultFolderInput.value = "";
+    const listing = await unlockPackedFiles(files, folderName);
+    await renderChainMonitor(listing);
+    if (openUnlockedCatalog(listing)) closeChainLedger();
+    else if (els.chainVaultStatus) {
+      els.chainVaultStatus.textContent = listing.valid
+        ? "No decodable plates in that folder."
+        : "Chain failed verification — plates stay locked";
+    }
   });
   document.getElementById("helpClose").addEventListener("click", () => {
     els.help.hidden = true;
@@ -1709,6 +2046,16 @@ async function wire() {
     if (!loaded) {
       paintCacheCard(await loadMergedSession());
       showOpener();
+    }
+  });
+  window.addEventListener("aperture-native-vault", async () => {
+    const listing = await fetchVault();
+    await renderChainMonitor(listing);
+    if (openUnlockedCatalog(listing)) closeChainLedger();
+    else if (els.chainVaultStatus) {
+      els.chainVaultStatus.textContent = (listing.files || []).length
+        ? "Chain failed verification — plates stay locked"
+        : "No decodable plates in that folder.";
     }
   });
   onHash();
