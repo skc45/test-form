@@ -74,6 +74,41 @@ def session_file() -> Path:
     return cache_home() / "session.json"
 
 
+def posts_dir() -> Path:
+    folder = cache_home() / "posts"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def list_posts() -> dict:
+    folder = cache_home() / "posts"
+    items: list[dict] = []
+    if folder.is_dir():
+        metas = sorted(folder.glob("*.json"), key=lambda path: path.name, reverse=True)
+        for meta_path in metas:
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            filename = Path(str(meta.get("file") or "")).name
+            image = (folder / filename).resolve()
+            if not filename or not image.is_file() or not safe_under(folder.resolve(), image):
+                continue
+            items.append(
+                {
+                    "title": str(meta.get("title") or ""),
+                    "caption": str(meta.get("caption") or ""),
+                    "file": filename,
+                    "type": str(meta.get("type") or ""),
+                    "sentAt": str(meta.get("sentAt") or ""),
+                    "src": "/media/posts/" + quote(filename),
+                }
+            )
+    return {"ok": True, "count": len(items), "posts": items}
+
+
 SKIP_DIR_NAMES = {"blockchain", "xrp"}
 
 
@@ -814,6 +849,12 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/eth":
             self._send_json(list_eth())
             return
+        if parsed.path == "/api/posts":
+            self._send_json(list_posts())
+            return
+        if parsed.path.startswith("/media/posts/"):
+            self._send_post_media(unquote(parsed.path[len("/media/posts/") :]))
+            return
         if parsed.path == "/api/eth/shard":
             qs = parse_qs(parsed.query)
             code = str((qs.get("c") or qs.get("code") or qs.get("pointer") or [""])[0])
@@ -917,9 +958,8 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if not payload:
             self.send_error(400, "Empty plate")
             return
-        posts = cache_home() / "posts"
-        posts.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        posts = posts_dir()
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:21]
         safe = "".join(ch if ch.isalnum() or ch in ".-_" else "-" for ch in filename) or "plate.jpg"
         image_path = posts / f"{stamp}-{safe}"
         image_path.write_bytes(payload)
@@ -935,7 +975,11 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             {
                 "ok": True,
                 "file": image_path.name,
+                "title": meta["title"],
                 "caption": meta["caption"],
+                "sentAt": meta["sentAt"],
+                "src": "/media/posts/" + quote(image_path.name),
+                "type": ctype,
             }
         )
 
@@ -1007,6 +1051,15 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(plain)
+
+    def _send_post_media(self, rel: str) -> None:
+        folder = cache_home() / "posts"
+        name = Path(rel).name
+        path = (folder / name).resolve()
+        if not folder.is_dir() or not path.is_file() or not safe_under(folder.resolve(), path):
+            self.send_error(404, "Not found")
+            return
+        self._send_image_file(path)
 
     def _send_nft_metadata(self, address: str) -> None:
         cert = lookup_eth_certificate(address)

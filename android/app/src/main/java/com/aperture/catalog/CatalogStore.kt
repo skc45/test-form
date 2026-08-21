@@ -356,6 +356,122 @@ class CatalogStore(private val context: Context) {
         return data.put("ok", true)
     }
 
+    fun postsResponse(): WebResourceResponse {
+        return json(postsListing())
+    }
+
+    fun postsListing(): JSONObject {
+        val posts = JSONArray()
+        val stored = postsArray()
+        val folder = postsDir()
+        for (i in 0 until stored.length()) {
+            val item = stored.optJSONObject(i) ?: continue
+            val file = item.optString("file")
+            if (file.isBlank() || !File(folder, file).isFile) continue
+            item.put("src", "/media/posts/$file")
+            posts.put(item)
+        }
+        return JSONObject()
+            .put("ok", true)
+            .put("count", posts.length())
+            .put("posts", posts)
+    }
+
+    fun savePost(url: String, filename: String, title: String, caption: String): JSONObject {
+        val bytes: ByteArray
+        var mime = ""
+        if (url.startsWith("data:")) {
+            bytes = decodeDataUrl(url) ?: return JSONObject().put("ok", false)
+            mime = mimeFromDataUrl(url)
+        } else {
+            val dest = File(context.cacheDir, "post-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
+            dest.parentFile?.mkdirs()
+            if (!exportToFile(url, dest) { }) return JSONObject().put("ok", false)
+            bytes = dest.readBytes()
+            mime = mimeFor(dest.name)
+        }
+        if (bytes.isEmpty() || bytes.size > POST_MAX) return JSONObject().put("ok", false)
+        val name = filename.substringAfterLast('/').ifBlank { "plate.jpg" }
+        val safe = name.map { ch ->
+            if (ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_') ch else '-'
+        }.joinToString("").ifBlank { "plate.jpg" }
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(java.util.Date())
+        val storedName = "$stamp-$safe"
+        File(postsDir(), storedName).writeBytes(bytes)
+        val sentAt = java.time.Instant.now().toString().take(19)
+        val storedMime = mime.ifBlank { mimeFor(storedName) }
+        val meta = JSONObject()
+            .put("title", title)
+            .put("caption", caption)
+            .put("file", storedName)
+            .put("type", storedMime)
+            .put("sentAt", sentAt)
+            .put("src", "/media/posts/$storedName")
+        rememberPost(meta)
+        return JSONObject()
+            .put("ok", true)
+            .put("title", title)
+            .put("caption", caption)
+            .put("file", storedName)
+            .put("type", storedMime)
+            .put("sentAt", sentAt)
+            .put("src", "/media/posts/$storedName")
+    }
+
+    fun postMediaResponse(rel: String): WebResourceResponse {
+        val name = File(rel).name
+        val folder = postsDir()
+        val file = File(folder, name)
+        if (!file.isFile) return notFound()
+        val canonical = try {
+            file.canonicalFile
+        } catch (_: Exception) {
+            return notFound()
+        }
+        if (canonical.parentFile != folder.canonicalFile) return notFound()
+        val mime = mimeFor(name)
+        return WebResourceResponse(
+            mime,
+            null,
+            200,
+            "OK",
+            mapOf(
+                "Cache-Control" to "no-store",
+                "Content-Type" to mime,
+                "Content-Length" to file.length().toString(),
+            ),
+            file.inputStream(),
+        )
+    }
+
+    private fun postsDir(): File {
+        val dir = File(context.filesDir, "posts")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun postsArray(): JSONArray {
+        val raw = prefs.getString(KEY_POSTS, "").orEmpty()
+        return try {
+            if (raw.isBlank()) JSONArray() else JSONArray(raw)
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private fun rememberPost(meta: JSONObject) {
+        val next = JSONArray()
+        next.put(JSONObject(meta.toString()))
+        val existing = postsArray()
+        for (i in 0 until existing.length()) {
+            if (next.length() >= 80) break
+            val item = existing.optJSONObject(i) ?: continue
+            if (item.optString("file") == meta.optString("file")) continue
+            next.put(item)
+        }
+        prefs.edit().putString(KEY_POSTS, next.toString()).apply()
+    }
+
     private fun loadSkinObject(): JSONObject {
         return try {
             val raw = prefs.getString(KEY_SKIN, "").orEmpty()
@@ -908,9 +1024,11 @@ class CatalogStore(private val context: Context) {
         private const val KEY_SKIN = "skin"
         private const val KEY_ETH = "ethShard"
         private const val KEY_ETH_SECRET = "ethSecret"
+        private const val KEY_POSTS = "canvasPosts"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
         private const val ETH_MAX_PLATE = 25 * 1024 * 1024
+        private const val POST_MAX = 25 * 1024 * 1024
         private const val ETH_SHARD_COUNT = 64
         private const val ETH_PREFIX = "eths:"
         private const val ETH_STANDARD = "erc721"

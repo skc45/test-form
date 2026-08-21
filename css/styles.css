@@ -1614,7 +1614,8 @@ kbd {
   word-break: break-all;
 }
 
-.eth-bar {
+.eth-bar,
+.canvas-bar {
   position: sticky;
   bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
   z-index: 4;
@@ -1633,20 +1634,112 @@ kbd {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 10px 24px color-mix(in srgb, var(--accent-deep) 32%, transparent);
 }
 
-.eth-bar[hidden] {
+.eth-bar[hidden],
+.canvas-bar[hidden] {
   display: none;
 }
 
-.eth-copy {
+.eth-copy,
+.canvas-copy {
   font-size: 0.78rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-weight: 500;
 }
 
-.eth-bar.is-busy {
+.eth-bar.is-busy,
+.canvas-bar.is-busy {
   cursor: wait;
   opacity: 0.85;
+}
+
+.canvas-board {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(ellipse at 50% 0%, var(--bg-2), transparent 55%),
+    var(--veil);
+  backdrop-filter: blur(22px);
+}
+
+.canvas-board[hidden] {
+  display: none;
+}
+
+.canvas-card {
+  width: min(720px, calc(100vw - 1.2rem));
+  max-height: min(88vh, 52rem);
+  overflow: auto;
+  padding: 1.45rem 1.3rem 1.3rem;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 22px;
+  background: var(--glass);
+  backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), var(--shadow);
+}
+
+.canvas-card h2 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 2rem;
+  font-weight: 320;
+  margin: 0.2rem 0 0.45rem;
+}
+
+.canvas-status {
+  margin: 0 0 0.95rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.canvas-wall {
+  column-count: 2;
+  column-gap: 0.7rem;
+  margin: 0 0 1.1rem;
+  text-align: left;
+}
+
+.canvas-plate {
+  break-inside: avoid;
+  margin: 0 0 0.7rem;
+  padding: 0.45rem 0.45rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 8px 18px rgba(20, 50, 90, 0.14);
+}
+
+.canvas-plate button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.canvas-plate img {
+  display: block;
+  width: 100%;
+  border-radius: 6px;
+  background: rgba(20, 70, 120, 0.18);
+}
+
+.canvas-caption {
+  margin: 0.45rem 0.2rem 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.canvas-empty {
+  column-span: all;
+  margin: 0.4rem 0 0.2rem;
+  color: var(--muted);
+  text-align: center;
 }
 
 @keyframes spin {

@@ -80,8 +80,11 @@ const els = {
   postShare: document.getElementById("postShare"),
   themeBtn: document.getElementById("themeBtn"),
   ethBtn: document.getElementById("ethBtn"),
-  ethBar: document.getElementById("ethBar"),
-  ethCopy: document.getElementById("ethCopy"),
+  canvasBar: document.getElementById("canvasBar"),
+  canvasCopy: document.getElementById("canvasCopy"),
+  canvasBoard: document.getElementById("canvasBoard"),
+  canvasStatus: document.getElementById("canvasStatus"),
+  canvasWall: document.getElementById("canvasWall"),
   ethShard: document.getElementById("ethShard"),
   ethStatus: document.getElementById("ethStatus"),
   ethCatalogAddress: document.getElementById("ethCatalogAddress"),
@@ -105,6 +108,7 @@ let recentSlideTimer = 0;
 let downloadBusy = false;
 let postBusy = false;
 let ethBusy = false;
+let canvasPosts = [];
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 const crop = {
@@ -570,7 +574,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> attach as NFT`;
+      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -612,7 +616,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · <kbd>X</kbd> attach as NFT · <kbd>T</kbd> skin";
+    hint.innerHTML = "Open a folder · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin";
   }
 }
 
@@ -1053,8 +1057,6 @@ function setEthProgress(pct, label) {
   if (els.ethTrack) els.ethTrack.hidden = pct <= 0;
   if (els.ethFill) els.ethFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
   if (label && els.ethStatus) els.ethStatus.textContent = label;
-  if (els.ethBar) els.ethBar.classList.toggle("is-busy", ethBusy);
-  if (els.ethCopy) els.ethCopy.textContent = ethBusy ? "Attaching NFT…" : "Attach as NFT";
 }
 
 async function fetchEthShard() {
@@ -1201,8 +1203,6 @@ async function encodeCatalogOnEth() {
     setEthProgress(0, "Could not attach as NFT");
   } finally {
     ethBusy = false;
-    if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1220,8 +1220,6 @@ async function encodeCurrentOnEth() {
     setEthProgress(0, "Could not attach this plate");
   } finally {
     ethBusy = false;
-    if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1239,7 +1237,8 @@ function insertDecodedPlate(photo) {
   });
   state.photos = next;
   const cat = photo.category || "nft";
-  const label = cat === "nft" ? "NFT" : "ETH";
+  const labels = { nft: "NFT", canvas: "Board", eth: "ETH" };
+  const label = labels[cat] || cat;
   if (!state.categories.some((item) => item.id === cat)) {
     state.categories = [...state.categories, { id: cat, label }];
   }
@@ -1362,8 +1361,6 @@ async function openEthShard(code) {
     setEthProgress(0, "Could not open that shard");
   } finally {
     ethBusy = false;
-    if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1406,6 +1403,13 @@ function onKey(event) {
     }
     return;
   }
+  if (els.canvasBoard && !els.canvasBoard.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCanvasBoard();
+    }
+    return;
+  }
   if (els.skinEditor && !els.skinEditor.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1429,6 +1433,13 @@ function onKey(event) {
     event.preventDefault();
     if (els.skinEditor?.hidden === false) closeSkinEditor();
     else openSkinEditor();
+    return;
+  }
+  if (event.key === "b" || event.key === "B") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    if (els.canvasBoard?.hidden === false) closeCanvasBoard();
+    else void openCanvasBoard();
     return;
   }
   if (event.key === "x" || event.key === "X") {
@@ -1945,39 +1956,170 @@ function postViaHttp(file, caption, title, onProgress) {
   });
 }
 
-async function sendNft(event) {
+async function sendCanvasPost(event) {
   event?.preventDefault();
   const photo = state.postPhoto;
   if (!photo || postBusy) return;
   postBusy = true;
   if (els.postSend) els.postSend.disabled = true;
   if (els.postShare) els.postShare.disabled = true;
-  const title = els.postCaption.value.trim() || photo.title || downloadFilename(photo);
-  setPostProgress(8, `Attaching ${title}…`);
+  const caption = els.postCaption.value.trim();
+  const title = photo.title || downloadFilename(photo);
+  setPostProgress(8, "Posting on Canvasboard…");
   try {
-    const result = await encodePhotoOnEth(photo, (pct) => setPostProgress(Math.max(10, pct), "Reading plate…"));
-    if (result?.ok === false || !(result?.address || result?.pointer || result?.certificate)) {
-      setPostProgress(0, "Could not attach as NFT");
+    const result = await saveCanvasPost(photo, title, caption, (pct) => {
+      setPostProgress(Math.max(10, pct), "Saving plate…");
+    });
+    if (result?.ok === false) {
+      setPostProgress(0, "Could not post on Canvasboard");
       postBusy = false;
       if (els.postSend) els.postSend.disabled = false;
       if (els.postShare) els.postShare.disabled = false;
       return;
     }
-    if (result.pointer && els.ethPointerInput) els.ethPointerInput.value = result.pointer;
-    paintEthShard(await fetchEthShard());
-    const pointer = result.pointer || result.address || "";
-    setPostProgress(100, pointer ? `NFT ${pointer}` : `Attached · shard ${result.shard}`);
+    setPostProgress(100, "Posted on Canvasboard");
     window.setTimeout(() => {
       closePostForm();
-      void openEthOverlay();
-    }, 700);
+      void openCanvasBoard();
+    }, 500);
   } catch {
     postBusy = false;
     if (els.postSend) els.postSend.disabled = false;
     if (els.postShare) els.postShare.disabled = false;
-    setPostProgress(0, "Could not attach as NFT");
+    setPostProgress(0, "Could not post on Canvasboard");
     if (els.postTrack) els.postTrack.hidden = true;
   }
+}
+
+const CANVAS_POSTS_KEY = "aperture-canvas-posts";
+
+function loadLocalCanvasPosts() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CANVAS_POSTS_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberLocalCanvasPost(post) {
+  const next = [post, ...loadLocalCanvasPosts().filter((item) => item.file !== post.file)].slice(0, 80);
+  try {
+    localStorage.setItem(CANVAS_POSTS_KEY, JSON.stringify(next));
+  } catch {
+    /* quota */
+  }
+}
+
+async function fetchCanvasPosts() {
+  try {
+    const response = await fetch("/api/posts", { headers: { Accept: "application/json" } });
+    if (response.ok) return await response.json();
+  } catch {
+    /* static host or native intercept */
+  }
+  if (window.ApertureAndroid?.posts) {
+    try {
+      return JSON.parse(window.ApertureAndroid.posts() || "{}");
+    } catch {
+      /* ignore */
+    }
+  }
+  const posts = loadLocalCanvasPosts();
+  return { ok: true, count: posts.length, posts };
+}
+
+async function saveCanvasPost(photo, title, caption, onProgress) {
+  const filename = downloadFilename(photo);
+  if (window.ApertureAndroid?.savePost) {
+    let src = photo.src;
+    if (String(src || "").startsWith("blob:")) {
+      const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
+      src = await blobToDataUrl(blob);
+    }
+    onProgress?.(70);
+    return JSON.parse(window.ApertureAndroid.savePost(src, filename, title, caption) || "{}");
+  }
+  const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
+  const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+  try {
+    const result = await postViaHttp(file, caption, title, (pct) => onProgress?.(Math.max(12, pct)));
+    if (result?.ok !== false) {
+      return {
+        ok: true,
+        title,
+        caption,
+        ...result,
+        src: result.src || (result.file ? `/media/posts/${result.file}` : ""),
+      };
+    }
+  } catch {
+    /* fall through to local board */
+  }
+  const dataUrl = await blobToDataUrl(blob);
+  const post = {
+    ok: true,
+    title,
+    caption,
+    file: filename,
+    type: blob.type || "image/jpeg",
+    sentAt: new Date().toISOString().slice(0, 19),
+    src: dataUrl,
+  };
+  rememberLocalCanvasPost(post);
+  return post;
+}
+
+function paintCanvasBoard(listing) {
+  canvasPosts = listing?.posts || [];
+  if (els.canvasStatus) {
+    els.canvasStatus.textContent = canvasPosts.length
+      ? `${canvasPosts.length} post${canvasPosts.length === 1 ? "" : "s"} on Canvasboard`
+      : "Crop a plate, then post it on the board.";
+  }
+  if (!els.canvasWall) return;
+  if (!canvasPosts.length) {
+    els.canvasWall.innerHTML = `<p class="canvas-empty">Nothing posted yet</p>`;
+    return;
+  }
+  els.canvasWall.innerHTML = canvasPosts
+    .map((post, index) => {
+      const caption = post.caption || post.title || "";
+      const title = post.title || post.caption || "Post";
+      return `
+      <article class="canvas-plate">
+        <button type="button" data-canvas-index="${index}">
+          <img src="${escapeHtml(post.src || "")}" alt="${escapeHtml(title)}" />
+        </button>
+        ${caption ? `<p class="canvas-caption">${escapeHtml(caption)}</p>` : ""}
+      </article>`;
+    })
+    .join("");
+}
+
+async function openCanvasBoard() {
+  if (!els.canvasBoard) return;
+  els.canvasBoard.hidden = false;
+  paintCanvasBoard(await fetchCanvasPosts());
+}
+
+function closeCanvasBoard() {
+  if (els.canvasBoard) els.canvasBoard.hidden = true;
+}
+
+function openCanvasPlate(index) {
+  const post = canvasPosts[index];
+  if (!post?.src) return;
+  closeCanvasBoard();
+  insertDecodedPlate({
+    id: `canvas/${post.file || index}`,
+    src: post.src,
+    thumb: post.src,
+    hero: post.src,
+    title: post.title || post.caption || "Post",
+    local: true,
+    category: "canvas",
+  });
 }
 
 async function sendPost(event) {
@@ -2127,7 +2269,7 @@ async function wire() {
   window.addEventListener("resize", () => {
     if (els.cropForm && !els.cropForm.hidden) paintCropBox();
   });
-  els.postCard?.addEventListener("submit", sendNft);
+  els.postCard?.addEventListener("submit", sendCanvasPost);
   document.getElementById("postShare")?.addEventListener("click", (event) => void sendPost(event));
   document.getElementById("postCancel")?.addEventListener("click", closePostForm);
   els.postForm?.addEventListener("click", (event) => {
@@ -2135,7 +2277,16 @@ async function wire() {
   });
   els.themeBtn?.addEventListener("click", openSkinEditor);
   els.ethBtn?.addEventListener("click", () => void openEthOverlay());
-  els.ethBar?.addEventListener("click", () => void encodeCatalogOnEth());
+  els.canvasBar?.addEventListener("click", () => void openCanvasBoard());
+  document.getElementById("canvasClose")?.addEventListener("click", closeCanvasBoard);
+  els.canvasBoard?.addEventListener("click", (event) => {
+    if (event.target === els.canvasBoard) closeCanvasBoard();
+  });
+  els.canvasWall?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-canvas-index]");
+    if (!btn) return;
+    openCanvasPlate(Number(btn.dataset.canvasIndex));
+  });
   document.getElementById("ethEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnEth());
   document.getElementById("ethEncodePlate")?.addEventListener("click", () => void encodeCurrentOnEth());
   document.getElementById("ethOpen")?.addEventListener("click", () => void openEthShard());
@@ -2277,6 +2428,10 @@ function apertureHandleBack() {
   }
   if (els.ethShard && !els.ethShard.hidden) {
     closeEthOverlay();
+    return true;
+  }
+  if (els.canvasBoard && !els.canvasBoard.hidden) {
+    closeCanvasBoard();
     return true;
   }
   if (els.cropForm && !els.cropForm.hidden) {

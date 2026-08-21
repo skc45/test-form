@@ -93,11 +93,11 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>X</kbd> attach as NFT · <kbd>T</kbd> skin</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
-          <button class="eth-bar" id="ethBar" type="button">
-            <span class="eth-copy" id="ethCopy">Attach as NFT</span>
+          <button class="canvas-bar" id="canvasBar" type="button">
+            <span class="canvas-copy" id="canvasCopy">Canvasboard</span>
           </button>
           <p class="empty" id="empty" hidden>No plates match that search.</p>
         </section>
@@ -166,13 +166,14 @@
           <div><dt>C</dt><dd>Fit or fill</dd></div>
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
-          <div><dt>Long-press</dt><dd>Crop, then attach as NFT</dd></div>
+          <div><dt>Long-press</dt><dd>Crop, then post on Canvasboard</dd></div>
+          <div><dt>B</dt><dd>Canvasboard</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then attach the crop as an NFT on an Ethereum shard.</p>
+        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then post the crop on Canvasboard.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -224,24 +225,34 @@
     <div class="post-form" id="postForm" hidden>
       <form class="post-card" id="postCard">
         <p class="help-kicker">Send</p>
-        <h2>Attach as NFT</h2>
+        <h2>Post on Canvasboard</h2>
         <img id="postPreview" alt="" />
         <label class="post-field">
-          <span class="sr-only">NFT title</span>
-          <textarea id="postCaption" name="caption" rows="3" maxlength="500" placeholder="Title for this NFT…"></textarea>
+          <span class="sr-only">Caption</span>
+          <textarea id="postCaption" name="caption" rows="3" maxlength="500" placeholder="Write a caption…"></textarea>
         </label>
         <p class="post-status" id="postStatus" hidden></p>
         <div class="download-track post-track" id="postTrack" hidden>
           <span class="download-fill" id="postFill"></span>
         </div>
         <div class="opener-actions">
-          <button class="text-btn opener-primary" id="postSend" type="submit">Attach as NFT</button>
-          <button class="text-btn" id="postShare" type="button">Send as a post</button>
+          <button class="text-btn opener-primary" id="postSend" type="submit">Post on Canvasboard</button>
+          <button class="text-btn" id="postShare" type="button">Share</button>
           <button class="text-btn" id="postCancel" type="button">Cancel</button>
         </div>
       </form>
     </div>
 
+    <div class="canvas-board" id="canvasBoard" hidden>
+      <div class="canvas-card">
+        <p class="help-kicker">Canvasboard</p>
+        <h2>Posted plates</h2>
+        <p class="canvas-status" id="canvasStatus">Crop a plate, then post it on the board.</p>
+        <div class="canvas-wall" id="canvasWall"></div>
+        <div class="opener-actions">
+          <button class="text-btn" id="canvasClose" type="button">Close</button>
+        </div>
+      </div>
     </div>
 
     <div class="skin-editor" id="skinEditor" hidden>

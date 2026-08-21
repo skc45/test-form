@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
                         path == "/api/eth" && request.method == "GET" -> store.ethResponse()
+                        path == "/api/posts" && request.method == "GET" -> store.postsResponse()
                         path.startsWith("/api/eth/nft/") -> {
                             val address = Uri.decode(path.removePrefix("/api/eth/nft/"))
                             store.nftResponse(address)
@@ -115,6 +116,10 @@ class MainActivity : AppCompatActivity() {
                         path.startsWith("/media/eth/") -> {
                             val rel = Uri.decode(path.removePrefix("/media/eth/"))
                             store.ethMediaResponse(rel)
+                        }
+                        path.startsWith("/media/posts/") -> {
+                            val rel = Uri.decode(path.removePrefix("/media/posts/"))
+                            store.postMediaResponse(rel)
                         }
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
@@ -219,6 +224,16 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 startShare(url, filename, caption)
             }
+        }
+
+        @JavascriptInterface
+        fun savePost(url: String, filename: String, title: String, caption: String): String {
+            return store.savePost(url, filename, title, caption).toString()
+        }
+
+        @JavascriptInterface
+        fun posts(): String {
+            return store.postsListing().toString()
         }
 
         @JavascriptInterface
