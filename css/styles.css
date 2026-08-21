@@ -220,7 +220,7 @@ kbd {
   flex: 1 1 0;
   width: auto;
   min-width: 0;
-  height: 3.7rem;
+  height: 6.2rem;
   border-radius: 12px;
 }
 
@@ -1386,7 +1386,7 @@ kbd {
   }
 
   .recent-tabs .header-plate {
-    height: 3.35rem;
+    height: 5.4rem;
   }
 
   .recent-tabs .header-plate .recent-plate-meta {

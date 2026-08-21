@@ -159,10 +159,47 @@ function isSelectedRecent(item) {
   return state.selectedIds.includes(item.id);
 }
 
+function uniquePhotoSrcs(photos) {
+  const srcs = [];
+  const seen = new Set();
+  for (const photo of photos || []) {
+    const src = photo.thumb || photo.src || photo.hero || "";
+    if (!src || seen.has(src)) continue;
+    seen.add(src);
+    srcs.push(src);
+    if (srcs.length === cache.MAX_RECENT_SLIDES) break;
+  }
+  return srcs;
+}
+
+function slidesFromCatalog(item) {
+  if (state.source !== "folder" || !state.photos.length) return [];
+  const selected = selectedRecentItems();
+  if (selected.length > 1) {
+    const mergeIndex = selected.findIndex((entry) => entry.id === item.id);
+    if (mergeIndex < 0) return [];
+    const prefix = `${mergeIndex}/`;
+    return uniquePhotoSrcs(state.photos.filter((photo) => String(photo.id).startsWith(prefix)));
+  }
+  const current = selected[0];
+  const isCurrent =
+    (current && current.id === item.id) ||
+    item.id === currentRecentId() ||
+    (state.folderPath && item.path === state.folderPath) ||
+    (state.folderName && item.name === state.folderName && !item.path);
+  if (!isCurrent) return [];
+  return uniquePhotoSrcs(state.photos);
+}
+
 function plateSlides(item, index) {
-  const stored = Array.isArray(item.covers) ? item.covers.filter(Boolean) : [];
-  if (stored.length) return stored.slice(0, cache.MAX_RECENT_SLIDES);
-  const cover = plateCover(item, index);
+  const fromCatalog = slidesFromCatalog(item);
+  if (fromCatalog.length > 1) return fromCatalog;
+  const stored = Array.isArray(item.covers)
+    ? item.covers.filter((src) => src && !String(src).startsWith("blob:"))
+    : [];
+  if (stored.length > 1) return stored.slice(0, cache.MAX_RECENT_SLIDES);
+  if (fromCatalog.length) return fromCatalog;
+  if (stored.length) return stored;
   const path = item.path || "";
   const api =
     Boolean(window.ApertureAndroid) ||
@@ -174,6 +211,7 @@ function plateSlides(item, index) {
     const n = Math.min(cache.MAX_RECENT_SLIDES, Math.max(Number(item.photoCount) || cache.MAX_RECENT_SLIDES, 1));
     return Array.from({ length: n }, (_, plate) => `/api/recent-cover?i=${index}&p=${plate}`);
   }
+  const cover = plateCover(item, index);
   return cover ? [cover] : [];
 }
 
@@ -199,8 +237,16 @@ function recentPlateMarkup(item, index, className) {
 
 function bindRecentPlateMedia(root) {
   [...root.querySelectorAll("[data-recent] img")].forEach((img) => {
-    if (img.complete && img.naturalWidth) img.classList.add("is-ready");
-    img.addEventListener("load", () => img.classList.add("is-ready"), { once: true });
+    const onReady = () => {
+      img.classList.add("is-ready");
+      const plate = img.closest("[data-recent]");
+      if (plate && !plate.querySelector(".recent-slideshow img.is-active.is-ready")) {
+        plate.querySelectorAll(".recent-slideshow img.is-active").forEach((other) => other.classList.remove("is-active"));
+        img.classList.add("is-active");
+      }
+    };
+    if (img.complete && img.naturalWidth) onReady();
+    else img.addEventListener("load", onReady, { once: true });
     img.addEventListener("error", () => img.classList.add("is-missing"), { once: true });
   });
 }
@@ -237,33 +283,29 @@ function stopRecentSlideshow() {
   recentSlideTimer = 0;
 }
 
+function readySlides(plate) {
+  return [...plate.querySelectorAll(".recent-slideshow img")].filter(
+    (img) => img.classList.contains("is-ready") && !img.classList.contains("is-missing")
+  );
+}
+
 function startRecentSlideshow() {
   stopRecentSlideshow();
-  const plates = recentSlidePlates();
-  if (!plates.length) return;
-  plates.forEach((plate, offset) => {
-    const slides = [...plate.querySelectorAll(".recent-slideshow img")].filter((img) => !img.classList.contains("is-missing"));
-    if (slides.length < 2) return;
-    const start = offset % slides.length;
-    slides.forEach((img, n) => img.classList.toggle("is-active", n === start));
-    plate.dataset.slide = String(start);
-  });
+  if (!recentSlidePlates().length) return;
   recentSlideTimer = window.setInterval(() => {
-    const live = recentSlidePlates();
-    if (!live.length) {
+    const plates = recentSlidePlates();
+    if (!plates.length) {
       stopRecentSlideshow();
       return;
     }
-    live.forEach((plate) => {
-      const slides = [...plate.querySelectorAll(".recent-slideshow img")].filter((img) => !img.classList.contains("is-missing"));
+    plates.forEach((plate) => {
+      const slides = readySlides(plate);
       if (slides.length < 2) return;
-      const current = Number(plate.dataset.slide || 0) % slides.length;
-      const next = (current + 1) % slides.length;
-      slides[current].classList.remove("is-active");
-      slides[next].classList.add("is-active");
-      plate.dataset.slide = String(next);
+      const current = slides.findIndex((img) => img.classList.contains("is-active"));
+      const next = ((current < 0 ? 0 : current) + 1) % slides.length;
+      slides.forEach((img, i) => img.classList.toggle("is-active", i === next));
     });
-  }, 2400);
+  }, 1800);
 }
 
 function renderRecentRow() {
@@ -485,7 +527,7 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
   renderFilters();
   renderHero();
   renderCatalog();
-  renderRecentTabs();
+  renderRecentSelection();
   persistCatalog();
 }
 
@@ -503,7 +545,7 @@ async function persistCatalogAsync() {
     const combined = state.selectedIds.length > 1;
     let recents = cache.normalizeRecents(session.recents);
     if (!combined) {
-      const covers = await coversFromPhotos(state.photos);
+      const covers = coversFromPhotos(state.photos);
       const entry = {
         id: state.folderPath || state.folderName,
         name: state.folderName,
@@ -531,7 +573,11 @@ async function persistCatalogAsync() {
       recents,
     });
     cache.saveCatalogIndex(state.photos);
-    paintCacheCard({ ...session, recents, folderName: state.folderName, folderPath: state.folderPath, source: "folder", selectedIds: state.selectedIds });
+    state.recents = recents;
+    if (els.cacheCard) els.cacheCard.hidden = recents.length === 0;
+    const rendered = [...(els.recentTabs?.querySelectorAll("[data-recent]") || [])].map((el) => el.dataset.id);
+    const nextIds = recents.map((item) => item.id);
+    if (rendered.join("\0") !== nextIds.join("\0")) renderRecentSelection();
     return;
   }
   if (hint) {
@@ -539,13 +585,8 @@ async function persistCatalogAsync() {
   }
 }
 
-async function coversFromPhotos(photos) {
-  const out = [];
-  for (const photo of (photos || []).slice(0, 4)) {
-    const cover = await coverFromPhoto(photo);
-    if (cover) out.push(cover);
-  }
-  return out;
+function coversFromPhotos(photos) {
+  return uniquePhotoSrcs(photos).filter((src) => !src.startsWith("blob:"));
 }
 
 async function coverFromPhoto(photo) {

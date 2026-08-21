@@ -56,6 +56,8 @@ class AndroidProjectTests(unittest.TestCase):
         app_js = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
         self.assertIn("toggleRecentSelection", app_js)
         self.assertIn("aria-multiselectable", app_js)
+        self.assertIn("slidesFromCatalog", app_js)
+        self.assertIn("readySlides", app_js)
         self.assertIn("startRecentSlideshow", app_js)
         self.assertIn("recentSlidePlates", app_js)
         self.assertIn("recent-slideshow", app_js)
