@@ -73,6 +73,7 @@ const els = {
   postTrack: document.getElementById("postTrack"),
   postFill: document.getElementById("postFill"),
   postSend: document.getElementById("postSend"),
+  postShare: document.getElementById("postShare"),
   themeBtn: document.getElementById("themeBtn"),
   ethBtn: document.getElementById("ethBtn"),
   ethBar: document.getElementById("ethBar"),
@@ -1658,11 +1659,12 @@ function openPostForm(photo) {
   const src = photo.hero || photo.src || photo.thumb;
   els.postPreview.src = src;
   els.postPreview.alt = photo.title || "Plate";
-  els.postCaption.value = [photo.title, photo.location].filter(Boolean).join(" · ");
+  els.postCaption.value = photo.title || "";
   els.postStatus.hidden = true;
   els.postTrack.hidden = true;
   els.postFill.style.width = "0%";
-  els.postSend.disabled = false;
+  if (els.postSend) els.postSend.disabled = false;
+  if (els.postShare) els.postShare.disabled = false;
   els.postForm.hidden = false;
   els.postCaption.focus();
   els.postCaption.select();
@@ -1750,12 +1752,48 @@ function postViaHttp(file, caption, title, onProgress) {
   });
 }
 
+async function sendNft(event) {
+  event?.preventDefault();
+  const photo = state.postPhoto;
+  if (!photo || postBusy) return;
+  postBusy = true;
+  if (els.postSend) els.postSend.disabled = true;
+  if (els.postShare) els.postShare.disabled = true;
+  const title = els.postCaption.value.trim() || photo.title || downloadFilename(photo);
+  setPostProgress(8, `Attaching ${title}…`);
+  try {
+    const result = await encodePhotoOnEth(photo, (pct) => setPostProgress(Math.max(10, pct), "Reading plate…"));
+    if (result?.ok === false || !(result?.address || result?.pointer || result?.certificate)) {
+      setPostProgress(0, "Could not attach as NFT");
+      postBusy = false;
+      if (els.postSend) els.postSend.disabled = false;
+      if (els.postShare) els.postShare.disabled = false;
+      return;
+    }
+    if (result.pointer && els.ethPointerInput) els.ethPointerInput.value = result.pointer;
+    paintEthShard(await fetchEthShard());
+    const pointer = result.pointer || result.address || "";
+    setPostProgress(100, pointer ? `NFT ${pointer}` : `Attached · shard ${result.shard}`);
+    window.setTimeout(() => {
+      closePostForm();
+      void openEthOverlay();
+    }, 700);
+  } catch {
+    postBusy = false;
+    if (els.postSend) els.postSend.disabled = false;
+    if (els.postShare) els.postShare.disabled = false;
+    setPostProgress(0, "Could not attach as NFT");
+    if (els.postTrack) els.postTrack.hidden = true;
+  }
+}
+
 async function sendPost(event) {
   event?.preventDefault();
   const photo = state.postPhoto;
   if (!photo || postBusy) return;
   postBusy = true;
-  els.postSend.disabled = true;
+  if (els.postSend) els.postSend.disabled = true;
+  if (els.postShare) els.postShare.disabled = true;
   const caption = els.postCaption.value.trim();
   const filename = downloadFilename(photo);
   setPostProgress(6, "Preparing plate…");
@@ -1785,7 +1823,8 @@ async function sendPost(event) {
     window.setTimeout(closePostForm, 400);
   } catch {
     postBusy = false;
-    els.postSend.disabled = false;
+    if (els.postSend) els.postSend.disabled = false;
+    if (els.postShare) els.postShare.disabled = false;
     setPostProgress(0, "Could not send");
     if (els.postTrack) els.postTrack.hidden = true;
   }
@@ -1883,7 +1922,8 @@ async function wire() {
     const featured = state.photos.find((p) => p.featured) || state.photos[0];
     if (featured) openPostForm(featured);
   });
-  els.postCard?.addEventListener("submit", sendPost);
+  els.postCard?.addEventListener("submit", sendNft);
+  document.getElementById("postShare")?.addEventListener("click", (event) => void sendPost(event));
   document.getElementById("postCancel")?.addEventListener("click", closePostForm);
   els.postForm?.addEventListener("click", (event) => {
     if (event.target === els.postForm) closePostForm();

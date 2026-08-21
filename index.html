@@ -166,13 +166,13 @@
           <div><dt>C</dt><dd>Fit or fill</dd></div>
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
-          <div><dt>Long-press</dt><dd>Send as a post</dd></div>
+          <div><dt>Long-press</dt><dd>Attach as NFT</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Attach a plate as an NFT on an Ethereum shard, then paste an eths: pointer or 0x address to open that token.</p>
+        <p class="help-foot">Open a folder to browse plates. Long-press a plate to attach it as an NFT on an Ethereum shard, then paste an eths: pointer or 0x address to open that token.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -201,18 +201,19 @@
     <div class="post-form" id="postForm" hidden>
       <form class="post-card" id="postCard">
         <p class="help-kicker">Send</p>
-        <h2>New post</h2>
+        <h2>Attach as NFT</h2>
         <img id="postPreview" alt="" />
         <label class="post-field">
-          <span class="sr-only">Caption</span>
-          <textarea id="postCaption" name="caption" rows="3" maxlength="500" placeholder="Write a caption…"></textarea>
+          <span class="sr-only">NFT title</span>
+          <textarea id="postCaption" name="caption" rows="3" maxlength="500" placeholder="Title for this NFT…"></textarea>
         </label>
         <p class="post-status" id="postStatus" hidden></p>
         <div class="download-track post-track" id="postTrack" hidden>
           <span class="download-fill" id="postFill"></span>
         </div>
         <div class="opener-actions">
-          <button class="text-btn opener-primary" id="postSend" type="submit">Send</button>
+          <button class="text-btn opener-primary" id="postSend" type="submit">Attach as NFT</button>
+          <button class="text-btn" id="postShare" type="button">Send as a post</button>
           <button class="text-btn" id="postCancel" type="button">Cancel</button>
         </div>
       </form>
