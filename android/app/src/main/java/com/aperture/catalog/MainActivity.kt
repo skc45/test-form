@@ -102,6 +102,7 @@ class MainActivity : AppCompatActivity() {
                             store.forget()
                             store.cacheResponse()
                         }
+                        path == "/api/chain" && request.method == "GET" -> store.chainResponse()
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
                             val plate = url.getQueryParameter("p")?.toIntOrNull() ?: 0
@@ -204,6 +205,11 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 startShare(url, filename, caption)
             }
+        }
+
+        @JavascriptInterface
+        fun chainAppend(title: String, caption: String, file: String, imageHash: String): String {
+            return store.chainAppend(title, caption, file, imageHash).toString()
         }
     }
 

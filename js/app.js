@@ -1,5 +1,6 @@
 import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
 import * as cache from "./data.js";
+import * as chain from "./chain.js";
 
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|svg)$/i;
 
@@ -69,6 +70,10 @@ const els = {
   postTrack: document.getElementById("postTrack"),
   postFill: document.getElementById("postFill"),
   postSend: document.getElementById("postSend"),
+  chainLedger: document.getElementById("chainLedger"),
+  chainList: document.getElementById("chainList"),
+  chainStatus: document.getElementById("chainStatus"),
+  chainBtn: document.getElementById("chainBtn"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -991,6 +996,20 @@ function onKey(event) {
     }
     return;
   }
+  if (els.chainLedger && !els.chainLedger.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeChainLedger();
+    }
+    return;
+  }
+  if (event.key === "b" || event.key === "B") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    if (els.chainLedger?.hidden === false) closeChainLedger();
+    else openChainLedger();
+    return;
+  }
   if (event.key === "o" || event.key === "O") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
@@ -1259,6 +1278,126 @@ function closePostForm() {
   postBusy = false;
 }
 
+async function hashBytes(buffer) {
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function loadChainBlocks() {
+  try {
+    const response = await fetch("/api/chain", { headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data.blocks) && data.blocks.length) return data.blocks;
+    }
+  } catch {
+    /* static hosts have no chain API */
+  }
+  try {
+    const raw = localStorage.getItem(chain.CHAIN_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.blocks) && data.blocks.length) return data.blocks;
+    }
+  } catch {
+    /* ignore broken cache */
+  }
+  return [await chain.genesisBlock()];
+}
+
+function cacheChainBlocks(blocks) {
+  try {
+    localStorage.setItem(chain.CHAIN_KEY, JSON.stringify({ blocks }));
+  } catch {
+    /* quota */
+  }
+}
+
+async function sealPostBlock(photo, caption, filename, blob) {
+  setPostProgress(86, "Sealing block…");
+  let imageHash = "";
+  if (blob) {
+    imageHash = await hashBytes(await blob.arrayBuffer());
+  } else {
+    imageHash = await chain.sha256Hex([photo.id, photo.src, filename, caption].join("|"));
+  }
+  const title = photo.title || filename;
+  if (window.ApertureAndroid?.chainAppend) {
+    try {
+      const data = JSON.parse(window.ApertureAndroid.chainAppend(title, caption, filename, imageHash) || "{}");
+      if (Array.isArray(data.blocks)) cacheChainBlocks(data.blocks);
+      return data.block || null;
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    const response = await fetch("/api/chain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ title, caption, file: filename, imageHash }),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.block) {
+        if (Array.isArray(data.blocks)) cacheChainBlocks(data.blocks);
+        return data.block;
+      }
+    }
+  } catch {
+    /* mine locally */
+  }
+  const blocks = await loadChainBlocks();
+  const prev = blocks[blocks.length - 1];
+  const block = await chain.mineBlock({
+    height: Number(prev.height || 0) + 1,
+    timestamp: new Date().toISOString().slice(0, 19),
+    title,
+    caption,
+    file: filename,
+    imageHash,
+    prevHash: prev.hash,
+    nonce: 0,
+  });
+  blocks.push(block);
+  cacheChainBlocks(blocks);
+  return block;
+}
+
+async function renderChainLedger() {
+  if (!els.chainList) return;
+  const blocks = await loadChainBlocks();
+  const valid = await chain.verifyChain(blocks);
+  if (els.chainStatus) {
+    els.chainStatus.textContent = valid
+      ? `${blocks.length} block${blocks.length === 1 ? "" : "s"} · SHA-256 · difficulty ${chain.DIFFICULTY}`
+      : "Chain failed verification";
+  }
+  els.chainList.innerHTML = blocks
+    .slice()
+    .reverse()
+    .map(
+      (block) => `
+      <li class="chain-block${Number(block.height) === 0 ? " is-genesis" : ""}">
+        <strong>${Number(block.height) === 0 ? "Genesis" : `Block ${block.height}`}${block.title ? ` · ${escapeHtml(block.title)}` : ""}</strong>
+        <span>${escapeHtml(block.caption || "No caption")}</span>
+        <span>${chain.shortHash(block.hash)} ← ${chain.shortHash(block.prevHash)}</span>
+      </li>`
+    )
+    .join("");
+}
+
+async function openChainLedger() {
+  if (!els.chainLedger) return;
+  els.chainLedger.hidden = false;
+  await renderChainLedger();
+}
+
+function closeChainLedger() {
+  if (!els.chainLedger) return;
+  els.chainLedger.hidden = true;
+}
+
 function setPostProgress(pct, label) {
   if (els.postTrack) els.postTrack.hidden = false;
   if (els.postFill) els.postFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
@@ -1346,6 +1485,7 @@ async function sendPost(event) {
   try {
     if (window.ApertureAndroid?.share) {
       await nativeShare(photo.src, filename, caption);
+      await sealPostBlock(photo, caption, filename, null);
       setPostProgress(100, "Sent");
       window.setTimeout(closePostForm, 500);
       return;
@@ -1357,6 +1497,8 @@ async function sendPost(event) {
         setPostProgress(Math.max(12, pct), `Sending… ${pct}%`);
       });
       if (result?.ok !== false) {
+        if (result.block) cacheChainBlocks((await loadChainBlocks()));
+        else await sealPostBlock(photo, caption, filename, blob);
         setPostProgress(100, "Sent");
         window.setTimeout(closePostForm, 700);
         return;
@@ -1365,6 +1507,7 @@ async function sendPost(event) {
       /* fall through to share sheet */
     }
     await postViaShareApi(file, caption, photo.title || "Aperture");
+    await sealPostBlock(photo, caption, filename, blob);
     setPostProgress(100, "Sent");
     window.setTimeout(closePostForm, 400);
   } catch {
@@ -1471,6 +1614,11 @@ async function wire() {
   els.postForm?.addEventListener("click", (event) => {
     if (event.target === els.postForm) closePostForm();
   });
+  els.chainBtn?.addEventListener("click", openChainLedger);
+  document.getElementById("chainClose")?.addEventListener("click", closeChainLedger);
+  els.chainLedger?.addEventListener("click", (event) => {
+    if (event.target === els.chainLedger) closeChainLedger();
+  });
   document.getElementById("helpClose").addEventListener("click", () => {
     els.help.hidden = true;
   });
@@ -1569,6 +1717,10 @@ async function wire() {
 function apertureHandleBack() {
   if (!els.help.hidden) {
     els.help.hidden = true;
+    return true;
+  }
+  if (els.chainLedger && !els.chainLedger.hidden) {
+    closeChainLedger();
     return true;
   }
   if (els.postForm && !els.postForm.hidden) {

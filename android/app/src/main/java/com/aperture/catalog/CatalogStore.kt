@@ -19,6 +19,7 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.Calendar
 import java.util.Locale
 
@@ -326,6 +327,116 @@ class CatalogStore(private val context: Context) {
         return nthImage(dir, 0)
     }
 
+    fun chainResponse(): WebResourceResponse {
+        val blocks = chainArray()
+        return json(
+            JSONObject()
+                .put("ok", true)
+                .put("valid", verifyChain(blocks))
+                .put("blocks", blocks),
+        )
+    }
+
+    fun chainAppend(title: String, caption: String, file: String, imageHash: String): JSONObject {
+        val blocks = chainArray()
+        val prev = blocks.getJSONObject(blocks.length() - 1)
+        val block = mineBlock(
+            JSONObject()
+                .put("height", prev.optInt("height") + 1)
+                .put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(java.util.Date()))
+                .put("title", title)
+                .put("caption", caption)
+                .put("file", file)
+                .put("imageHash", imageHash)
+                .put("prevHash", prev.optString("hash"))
+                .put("nonce", 0),
+        )
+        blocks.put(block)
+        prefs.edit().putString(KEY_CHAIN, blocks.toString()).apply()
+        return JSONObject()
+            .put("ok", true)
+            .put("valid", verifyChain(blocks))
+            .put("block", block)
+            .put("blocks", blocks)
+    }
+
+    private fun chainArray(): JSONArray {
+        val raw = prefs.getString(KEY_CHAIN, "").orEmpty()
+        if (raw.isNotBlank()) {
+            try {
+                val blocks = JSONArray(raw)
+                if (blocks.length() > 0) return blocks
+            } catch (_: Exception) {
+                /* seed genesis */
+            }
+        }
+        val genesis = JSONArray().put(mineBlock(genesisSeed()))
+        prefs.edit().putString(KEY_CHAIN, genesis.toString()).apply()
+        return genesis
+    }
+
+    private fun genesisSeed(): JSONObject {
+        return JSONObject()
+            .put("height", 0)
+            .put("timestamp", "1970-01-01T00:00:00")
+            .put("title", "Aperture")
+            .put("caption", "Genesis plate")
+            .put("file", "")
+            .put("imageHash", GENESIS_PREV)
+            .put("prevHash", GENESIS_PREV)
+            .put("nonce", 0)
+    }
+
+    private fun blockPayload(block: JSONObject): String {
+        return listOf(
+            block.optInt("height").toString(),
+            block.optString("prevHash"),
+            block.optString("timestamp"),
+            block.optString("title"),
+            block.optString("caption"),
+            block.optString("file"),
+            block.optString("imageHash"),
+            block.optInt("nonce").toString(),
+        ).joinToString("|")
+    }
+
+    private fun hashBlock(block: JSONObject): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(blockPayload(block).toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+    }
+
+    private fun mineBlock(block: JSONObject, difficulty: Int = CHAIN_DIFFICULTY): JSONObject {
+        val prefix = "0".repeat(difficulty)
+        var nonce = 0
+        while (true) {
+            block.put("nonce", nonce)
+            val digest = hashBlock(block)
+            if (digest.startsWith(prefix)) {
+                block.put("hash", digest)
+                return block
+            }
+            nonce += 1
+        }
+    }
+
+    private fun verifyChain(blocks: JSONArray): Boolean {
+        val prefix = "0".repeat(CHAIN_DIFFICULTY)
+        if (blocks.length() == 0) return false
+        for (index in 0 until blocks.length()) {
+            val block = blocks.getJSONObject(index)
+            val digest = hashBlock(block)
+            if (digest != block.optString("hash") || !digest.startsWith(prefix)) return false
+            if (index == 0) {
+                if (block.optInt("height") != 0 || block.optString("prevHash") != GENESIS_PREV) return false
+                continue
+            }
+            val prev = blocks.getJSONObject(index - 1)
+            if (block.optInt("height") != prev.optInt("height") + 1) return false
+            if (block.optString("prevHash") != prev.optString("hash")) return false
+        }
+        return true
+    }
+
     private fun hasPermission(uri: Uri): Boolean {
         return context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
     }
@@ -517,8 +628,11 @@ class CatalogStore(private val context: Context) {
         private const val KEY_OPENED = "openedAt"
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
+        private const val KEY_CHAIN = "chain"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
+        private const val CHAIN_DIFFICULTY = 3
+        private const val GENESIS_PREV = "0000000000000000000000000000000000000000000000000000000000000000"
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

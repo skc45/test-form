@@ -95,6 +95,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Tap to download", body)
         self.assertIn(b'id="postForm"', body)
         self.assertIn(b"New post", body)
+        self.assertIn(b'id="chainLedger"', body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -131,6 +132,30 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meta["caption"], "Golden hour")
         self.assertEqual(meta["title"], "Ridge")
         self.assertEqual(meta["file"], data["file"])
+        self.assertTrue(data["block"]["hash"].startswith("0" * 3))
+        self.assertEqual(data["block"]["height"], 1)
+        self.assertTrue(data["valid"])
+
+    def test_chain_endpoint_lists_blocks(self):
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request("GET", "/api/chain")
+        response = conn.getresponse()
+        payload = json.loads(response.read())
+        conn.close()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["valid"])
+        self.assertGreaterEqual(len(payload["blocks"]), 1)
+        self.assertEqual(payload["blocks"][0]["title"], "Aperture")
+
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        body = json.dumps({"title": "Ridge", "caption": "On chain", "file": "ridge.png", "imageHash": "abc"})
+        conn.request("POST", "/api/chain", body, {"Content-Type": "application/json"})
+        posted = json.loads(conn.getresponse().read())
+        conn.close()
+        self.assertTrue(posted["ok"])
+        self.assertEqual(posted["block"]["caption"], "On chain")
+        self.assertTrue(posted["valid"])
 
 
 class CacheTests(unittest.TestCase):
@@ -333,6 +358,33 @@ class CacheTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class ChainTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(Path(self.tmp.name) / "cache")
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old
+        self.tmp.cleanup()
+
+    def test_chain_links_and_rejects_tamper(self):
+        genesis = app.genesis_block()
+        self.assertTrue(genesis["hash"].startswith("0" * app.CHAIN_DIFFICULTY))
+        self.assertTrue(app.verify_chain([genesis]))
+        block = app.append_block("Ridge", "Golden hour", "ridge.png", "abc123")
+        loaded = app.load_chain()
+        self.assertEqual(len(loaded), 2)
+        self.assertEqual(loaded[-1]["hash"], block["hash"])
+        self.assertEqual(loaded[-1]["prevHash"], loaded[0]["hash"])
+        self.assertTrue(app.verify_chain(loaded))
+        loaded[-1]["caption"] = "tampered"
+        self.assertFalse(app.verify_chain(loaded))
 
 
 if __name__ == "__main__":

@@ -78,12 +78,14 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 - Category filters from subfolders, plus search
 - Full-screen viewer with fit/fill, zoom, pan, slideshow, and a filmstrip
 - Deep links: `#photo/solstice` opens that demo plate directly
+- Each sent post is sealed onto a local SHA-256 hash chain (difficulty 3). Open the ledger with the chain icon or **B**
 
 ## Shortcuts
 
 | Key | Action |
 | --- | --- |
 | `O` | Open folder |
+| `B` | Blockchain ledger |
 | `←` `→` | Previous / next |
 | `Space` | Slideshow |
 | `F` | Browser fullscreen |

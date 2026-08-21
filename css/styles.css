@@ -1098,6 +1098,89 @@ kbd {
   margin: 0 0 0.85rem;
 }
 
+.chain-ledger {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(160, 220, 255, 0.35), transparent 55%),
+    rgba(18, 70, 120, 0.28);
+  backdrop-filter: blur(22px);
+}
+
+.chain-ledger[hidden] {
+  display: none;
+}
+
+.chain-card {
+  width: min(460px, calc(100vw - 1.6rem));
+  max-height: min(82vh, 40rem);
+  overflow: auto;
+  padding: 1.5rem 1.35rem 1.4rem;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 22px;
+  background: var(--glass);
+  backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), var(--shadow);
+}
+
+.chain-card h2 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 2rem;
+  font-weight: 320;
+  margin: 0.2rem 0 0.55rem;
+  text-align: center;
+}
+
+.chain-card .help-kicker {
+  text-align: center;
+}
+
+.chain-status {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.chain-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.chain-block {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.chain-block strong {
+  display: block;
+  font-family: Fraunces, Georgia, serif;
+  font-weight: 500;
+}
+
+.chain-block span {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+}
+
+.chain-block.is-genesis {
+  border-color: #c5ecff;
+}
+
 .card,
 .hero-frame,
 .viewer-image,

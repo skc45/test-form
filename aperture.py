@@ -11,6 +11,7 @@ Open a folder of photographs in the Aperture GUI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -71,6 +72,135 @@ def cache_home() -> Path:
 
 def session_file() -> Path:
     return cache_home() / "session.json"
+
+
+CHAIN_DIFFICULTY = 3
+GENESIS_PREV = "0" * 64
+
+
+def chain_file() -> Path:
+    return cache_home() / "chain.json"
+
+
+def sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def as_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def block_payload(block: dict) -> str:
+    return "|".join(
+        [
+            str(as_int(block.get("height"), 0)),
+            str(block.get("prevHash") or ""),
+            str(block.get("timestamp") or ""),
+            str(block.get("title") or ""),
+            str(block.get("caption") or ""),
+            str(block.get("file") or ""),
+            str(block.get("imageHash") or ""),
+            str(as_int(block.get("nonce"), 0)),
+        ]
+    )
+
+
+def hash_block(block: dict) -> str:
+    return sha256_hex(block_payload(block))
+
+
+def mine_block(block: dict, difficulty: int = CHAIN_DIFFICULTY) -> dict:
+    prefix = "0" * difficulty
+    nonce = as_int(block.get("nonce"), 0)
+    while True:
+        block["nonce"] = nonce
+        digest = hash_block(block)
+        if digest.startswith(prefix):
+            block["hash"] = digest
+            return block
+        nonce += 1
+
+
+def genesis_block() -> dict:
+    return mine_block(
+        {
+            "height": 0,
+            "timestamp": "1970-01-01T00:00:00",
+            "title": "Aperture",
+            "caption": "Genesis plate",
+            "file": "",
+            "imageHash": GENESIS_PREV,
+            "prevHash": GENESIS_PREV,
+            "nonce": 0,
+        }
+    )
+
+
+def save_chain(blocks: list[dict]) -> None:
+    path = chain_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"blocks": blocks}, indent=2) + "\n", encoding="utf-8")
+
+
+def load_chain() -> list[dict]:
+    path = chain_file()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            blocks = data.get("blocks") if isinstance(data, dict) else data
+            if isinstance(blocks, list) and blocks:
+                return blocks
+        except (OSError, json.JSONDecodeError):
+            pass
+    chain = [genesis_block()]
+    save_chain(chain)
+    return chain
+
+
+def verify_chain(blocks: list[dict] | None = None, difficulty: int = CHAIN_DIFFICULTY) -> bool:
+    chain = blocks if blocks is not None else load_chain()
+    if not chain:
+        return False
+    prefix = "0" * difficulty
+    for index, block in enumerate(chain):
+        digest = hash_block(block)
+        if digest != str(block.get("hash") or "") or not digest.startswith(prefix):
+            return False
+        if index == 0:
+            if as_int(block.get("height"), -1) != 0 or str(block.get("prevHash") or "") != GENESIS_PREV:
+                return False
+            continue
+        prev = chain[index - 1]
+        if as_int(block.get("height"), -1) != as_int(prev.get("height"), 0) + 1:
+            return False
+        if str(block.get("prevHash") or "") != str(prev.get("hash") or ""):
+            return False
+    return True
+
+
+def append_block(title: str, caption: str, filename: str, image_hash: str) -> dict:
+    chain = load_chain()
+    prev = chain[-1]
+    block = mine_block(
+        {
+            "height": as_int(prev.get("height"), 0) + 1,
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "title": title or "",
+            "caption": caption or "",
+            "file": filename or "",
+            "imageHash": image_hash or "",
+            "prevHash": str(prev.get("hash") or ""),
+            "nonce": 0,
+        }
+    )
+    chain.append(block)
+    save_chain(chain)
+    return block
 
 
 def chrome_profile_dir() -> Path:
@@ -383,6 +513,10 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/recent-cover":
             self._send_recent_cover(parsed.query)
             return
+        if parsed.path == "/api/chain":
+            blocks = load_chain()
+            self._send_json({"ok": True, "valid": verify_chain(blocks), "blocks": blocks})
+            return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
             return
@@ -392,6 +526,17 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/post":
             self._save_post()
+            return
+        if parsed.path == "/api/chain":
+            body = self._read_json()
+            block = append_block(
+                str(body.get("title") or ""),
+                str(body.get("caption") or ""),
+                str(body.get("file") or ""),
+                str(body.get("imageHash") or ""),
+            )
+            blocks = load_chain()
+            self._send_json({"ok": True, "valid": verify_chain(blocks), "block": block, "blocks": blocks})
             return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
@@ -471,7 +616,11 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             "sentAt": datetime.now().isoformat(timespec="seconds"),
         }
         (posts / f"{stamp}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-        self._send_json({"ok": True, "file": image_path.name, "caption": meta["caption"]})
+        image_hash = hashlib.sha256(payload).hexdigest()
+        block = append_block(meta["title"], meta["caption"], image_path.name, image_hash)
+        self._send_json(
+            {"ok": True, "file": image_path.name, "caption": meta["caption"], "block": block, "valid": verify_chain()}
+        )
 
     def _parse_multipart(self, content_type: str, raw: bytes) -> tuple[dict, dict]:
         header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
