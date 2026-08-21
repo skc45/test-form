@@ -352,6 +352,11 @@ XRP_CIPHER_LABEL = b"aperture-xrp-cipher-v1"
 XRP_MEMO_TYPE = "aperture/xrp"
 XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
 XRP_MAX_PLATE = 25 * 1024 * 1024
+SPOT_MAGIC = b"APXS"
+SPOT_VERSION = 1
+SPOT_LABEL = b"aperture-xrp-spot-v1"
+SPOT_PREFIX = "apxs1:"
+SPOT_PAYLOAD = 72
 
 
 def xrp_secret_file() -> Path:
@@ -425,6 +430,130 @@ def classic_address(payload20: bytes) -> str:
     return b58encode(versioned + check)
 
 
+def b58decode(text: str, alphabet: str = XRP_ALPHABET) -> bytes | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    zeros = 0
+    for ch in raw:
+        if ch == alphabet[0]:
+            zeros += 1
+        else:
+            break
+    number = 0
+    for ch in raw:
+        index = alphabet.find(ch)
+        if index < 0:
+            return None
+        number = number * 58 + index
+    body = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    return b"\x00" * zeros + body
+
+
+def account_id(address: str) -> bytes | None:
+    data = b58decode(address)
+    if not data or len(data) < 25:
+        return None
+    payload, check = data[:-4], data[-4:]
+    if sha256_bytes(sha256_bytes(payload))[:4] != check or payload[0] != 0 or len(payload) != 21:
+        return None
+    return payload[1:]
+
+
+def spot_key(secret: bytes) -> bytes:
+    return sha256_bytes(SPOT_LABEL + secret)
+
+
+def encode_spot(image_hash: bytes, secret: bytes | None = None) -> str:
+    secret = secret if secret is not None else load_xrp_secret()
+    dest = sha256_bytes(image_hash + b"xrpl-plate" + secret)[:20]
+    catalog = sha256_bytes(b"xrpl-catalog" + secret)[:20]
+    payload = dest + catalog + image_hash
+    nonce = os.urandom(XRP_NONCE_SIZE)
+    key = sha256_bytes(secret + nonce + SPOT_LABEL)
+    cipher = xor_seal(payload, key)
+    tag = hmac.new(spot_key(secret), nonce + cipher, hashlib.sha256).digest()
+    envelope = SPOT_MAGIC + bytes([SPOT_VERSION]) + nonce + tag + cipher
+    return SPOT_PREFIX + b58encode(envelope)
+
+
+def decode_spot(code: str, secret: bytes | None = None) -> dict | None:
+    raw = str(code or "").strip()
+    if raw.lower().startswith(SPOT_PREFIX):
+        raw = raw[len(SPOT_PREFIX) :]
+    packed = b58decode(raw)
+    header = 5 + XRP_NONCE_SIZE + XRP_HASH_SIZE
+    if not packed or len(packed) < header + SPOT_PAYLOAD:
+        return None
+    if packed[:4] != SPOT_MAGIC or packed[4] != SPOT_VERSION:
+        return None
+    secret = secret if secret is not None else load_xrp_secret()
+    nonce = packed[5 : 5 + XRP_NONCE_SIZE]
+    tag = packed[5 + XRP_NONCE_SIZE : header]
+    cipher = packed[header:]
+    expected = hmac.new(spot_key(secret), nonce + cipher, hashlib.sha256).digest()
+    if not hmac.compare_digest(expected, tag):
+        return None
+    key = sha256_bytes(secret + nonce + SPOT_LABEL)
+    payload = xor_seal(cipher, key)
+    if len(payload) < SPOT_PAYLOAD:
+        return None
+    dest_id, catalog_id, image_hash = payload[:20], payload[20:40], payload[40:72]
+    address = classic_address(dest_id)
+    catalog = classic_address(catalog_id)
+    return {
+        "ok": True,
+        "kind": "aperture-xrp-spot",
+        "ledger": "xrpl",
+        "address": address,
+        "catalogAddress": catalog,
+        "imageHash": to_hex(image_hash),
+        "account": catalog,
+        "destination": address,
+        "spot": SPOT_PREFIX + raw if not str(code or "").strip().lower().startswith(SPOT_PREFIX) else str(code).strip(),
+    }
+
+
+def lookup_xrp_certificate(address: str = "", image_hash: str = "") -> dict | None:
+    digest = str(image_hash or "").upper()
+    for item in load_xrp_ledger().get("plates") or []:
+        if not isinstance(item, dict):
+            continue
+        if address and str(item.get("address") or "") == address:
+            return item
+        if digest and str(item.get("imageHash") or "").upper() == digest:
+            return item
+    return None
+
+
+def open_xrp_vault(address: str) -> Path | None:
+    name = Path(str(address or "")).name
+    if not name:
+        return None
+    path = xrp_vault_dir() / f"{name}.apxr"
+    return path if path.is_file() else None
+
+
+def resolve_spot(code: str) -> dict:
+    located = decode_spot(code)
+    if not located:
+        return {"ok": False, "error": "invalid spot"}
+    cert = lookup_xrp_certificate(located["address"], located["imageHash"])
+    vault = open_xrp_vault(located["address"])
+    plain = None
+    if vault:
+        unlocked = decode_plate(vault.read_bytes())
+        if unlocked:
+            plain = unlocked[1]
+    located["certificate"] = cert or {}
+    located["title"] = (cert or {}).get("title") or "XRP plate"
+    located["file"] = (cert or {}).get("file") or "plate"
+    located["mime"] = (cert or {}).get("mime") or "application/octet-stream"
+    located["src"] = "/media/xrp/" + located["address"] if plain is not None else ""
+    located["decoded"] = plain is not None
+    return located
+
+
 def cipher_key(secret: bytes) -> bytes:
     return sha256_bytes(XRP_CIPHER_LABEL + secret)
 
@@ -483,10 +612,11 @@ def encode_plate(plain: bytes, title: str = "", filename: str = "plate", mime: s
         "Amount": "1",
         "Memos": [{"Memo": {"MemoType": cert["memoType"], "MemoFormat": cert["memoFormat"], "MemoData": memo_data}}],
     }
+    cert["spot"] = encode_spot(image_hash, secret)
     vault = xrp_vault_dir() / f"{address}.apxr"
     vault.write_bytes(envelope)
     remember_xrp_certificate(cert)
-    return {"ok": True, "certificate": cert, "address": address, "catalogAddress": catalog, "vault": vault.name}
+    return {"ok": True, "certificate": cert, "address": address, "catalogAddress": catalog, "vault": vault.name, "spot": cert["spot"]}
 
 
 def decode_plate(envelope: bytes, secret: bytes | None = None) -> tuple[dict, bytes] | None:
@@ -735,6 +865,18 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/xrp":
             self._send_json(list_xrp())
             return
+        if parsed.path == "/api/xrp/spot":
+            qs = parse_qs(parsed.query)
+            code = str((qs.get("c") or qs.get("code") or [""])[0])
+            located = resolve_spot(code)
+            if not located.get("ok"):
+                self.send_error(400, str(located.get("error") or "Invalid spot"))
+                return
+            self._send_json(located)
+            return
+        if parsed.path.startswith("/media/xrp/"):
+            self._send_xrp_media(unquote(parsed.path[len("/media/xrp/") :]))
+            return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
             return
@@ -750,6 +892,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/xrp":
             self._encode_xrp()
+            return
+        if parsed.path == "/api/xrp/decode":
+            body = self._read_json()
+            located = resolve_spot(str(body.get("spot") or body.get("code") or ""))
+            if not located.get("ok"):
+                self.send_error(400, str(located.get("error") or "Invalid spot"))
+                return
+            self._send_json(located)
             return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
@@ -889,6 +1039,26 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Folder not found")
             return
         self._send_json(encode_open_folders(folders))
+
+    def _send_xrp_media(self, rel: str) -> None:
+        address = Path(rel).name
+        vault = open_xrp_vault(address)
+        if not vault:
+            self.send_error(404, "Not found")
+            return
+        unlocked = decode_plate(vault.read_bytes())
+        if not unlocked:
+            self.send_error(404, "Locked")
+            return
+        header, plain = unlocked
+        cert = lookup_xrp_certificate(address, header.get("imageHash") or "")
+        ctype = str((cert or {}).get("mime") or mimetypes.guess_type(str((cert or {}).get("file") or ""))[0] or "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(plain)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(plain)
 
     def _read_json(self) -> dict:
         try:

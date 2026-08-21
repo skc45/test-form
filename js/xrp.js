@@ -6,6 +6,10 @@ export const CIPHER_LABEL = "aperture-xrp-cipher-v1";
 export const MEMO_TYPE = "aperture/xrp";
 export const SECRET_KEY = "aperture-xrp-secret";
 export const LEDGER_KEY = "aperture-xrp-ledger";
+export const SPOT_MAGIC = new Uint8Array([0x41, 0x50, 0x58, 0x53]);
+export const SPOT_LABEL = "aperture-xrp-spot-v1";
+export const SPOT_PREFIX = "apxs1:";
+export const SPOT_PAYLOAD = 72;
 export const XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
 
 const te = new TextEncoder();
@@ -81,6 +85,96 @@ export async function classicAddress(payload20) {
   return b58encode(concat(versioned, check));
 }
 
+export function b58decode(text, alphabet = XRP_ALPHABET) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  let zeros = 0;
+  for (const ch of raw) {
+    if (ch === alphabet[0]) zeros += 1;
+    else break;
+  }
+  let n = 0n;
+  for (const ch of raw) {
+    const index = alphabet.indexOf(ch);
+    if (index < 0) return null;
+    n = n * 58n + BigInt(index);
+  }
+  let hex = n.toString(16);
+  if (hex.length % 2) hex = `0${hex}`;
+  const body = n === 0n ? new Uint8Array() : fromHex(hex);
+  const out = new Uint8Array(zeros + body.length);
+  out.set(body, zeros);
+  return out;
+}
+
+export async function accountId(address) {
+  const data = b58decode(address);
+  if (!data || data.length < 25) return null;
+  const payload = data.subarray(0, data.length - 4);
+  const check = data.subarray(data.length - 4);
+  const expected = (await sha256(await sha256(payload))).subarray(0, 4);
+  if (toHex(expected) !== toHex(check) || payload[0] !== 0 || payload.length !== 21) return null;
+  return payload.subarray(1);
+}
+
+export async function spotKey(secret) {
+  return sha256(concat(te.encode(SPOT_LABEL), secret));
+}
+
+export async function encodeSpot(imageHash, secret) {
+  const dest = (await sha256(concat(imageHash, te.encode("xrpl-plate"), secret))).subarray(0, 20);
+  const catalog = (await sha256(concat(te.encode("xrpl-catalog"), secret))).subarray(0, 20);
+  const payload = concat(dest, catalog, imageHash);
+  const nonce = randomBytes(NONCE_SIZE);
+  const key = await sha256(concat(secret, nonce, te.encode(SPOT_LABEL)));
+  const cipher = xorSeal(payload, key);
+  const tag = await hmacSha256(await spotKey(secret), concat(nonce, cipher));
+  const envelope = concat(SPOT_MAGIC, new Uint8Array([VERSION]), nonce, tag, cipher);
+  return `${SPOT_PREFIX}${b58encode(envelope)}`;
+}
+
+export async function decodeSpot(code, secret) {
+  let raw = String(code || "").trim();
+  if (raw.toLowerCase().startsWith(SPOT_PREFIX)) raw = raw.slice(SPOT_PREFIX.length);
+  const packed = b58decode(raw);
+  const header = 5 + NONCE_SIZE + HASH_SIZE;
+  if (!packed || packed.length < header + SPOT_PAYLOAD) return null;
+  if (packed[0] !== SPOT_MAGIC[0] || packed[1] !== SPOT_MAGIC[1] || packed[2] !== SPOT_MAGIC[2] || packed[3] !== SPOT_MAGIC[3] || packed[4] !== VERSION) {
+    return null;
+  }
+  const nonce = packed.subarray(5, 5 + NONCE_SIZE);
+  const tag = packed.subarray(5 + NONCE_SIZE, header);
+  const cipher = packed.subarray(header);
+  const expected = await hmacSha256(await spotKey(secret), concat(nonce, cipher));
+  if (toHex(expected) !== toHex(tag)) return null;
+  const key = await sha256(concat(secret, nonce, te.encode(SPOT_LABEL)));
+  const payload = xorSeal(cipher, key);
+  if (payload.length < SPOT_PAYLOAD) return null;
+  const address = await classicAddress(payload.subarray(0, 20));
+  const catalog = await classicAddress(payload.subarray(20, 40));
+  return {
+    ok: true,
+    kind: "aperture-xrp-spot",
+    ledger: "xrpl",
+    address,
+    catalogAddress: catalog,
+    destination: address,
+    account: catalog,
+    imageHash: toHex(payload.subarray(40, 72)),
+    spot: String(code || "").trim().toLowerCase().startsWith(SPOT_PREFIX) ? String(code).trim() : `${SPOT_PREFIX}${raw}`,
+  };
+}
+
+const localEnvelopes = new Map();
+
+export function rememberEnvelope(address, envelope) {
+  if (address && envelope) localEnvelopes.set(address, envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope));
+}
+
+export function loadEnvelope(address) {
+  return localEnvelopes.get(address) || null;
+}
+
 export async function cipherKey(secret) {
   return sha256(concat(te.encode(CIPHER_LABEL), secret));
 }
@@ -145,7 +239,9 @@ export async function encodePlate(plain, meta, secret) {
       },
     ],
   };
-  return { ok: true, envelope, certificate: cert, address, catalogAddress: cert.tx.Account };
+  cert.spot = await encodeSpot(imageHash, secret);
+  rememberEnvelope(address, envelope);
+  return { ok: true, envelope, certificate: cert, address, catalogAddress: cert.tx.Account, spot: cert.spot };
 }
 
 export async function decodePlate(envelope, secret) {

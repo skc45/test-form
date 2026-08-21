@@ -81,6 +81,8 @@ const els = {
   xrpStatus: document.getElementById("xrpStatus"),
   xrpCatalogAddress: document.getElementById("xrpCatalogAddress"),
   xrpList: document.getElementById("xrpList"),
+  xrpSpotInput: document.getElementById("xrpSpotInput"),
+  xrpSpotReadout: document.getElementById("xrpSpotReadout"),
   xrpTrack: document.getElementById("xrpTrack"),
   xrpFill: document.getElementById("xrpFill"),
   skinEditor: document.getElementById("skinEditor"),
@@ -1075,10 +1077,12 @@ function paintXrpLedger(listing) {
       .slice(0, 12)
       .map(
         (item) => `
-      <li class="xrp-plate">
-        <strong>${escapeHtml(item.title || item.file || "Plate")}</strong>
-        <span>${escapeHtml(item.address || "")}</span>
-        <span>${escapeHtml(shortAddress(item.imageHash || item.memoData || ""))}</span>
+      <li>
+        <button class="xrp-plate" type="button" data-spot="${escapeHtml(item.spot || "")}" data-address="${escapeHtml(item.address || "")}">
+          <strong>${escapeHtml(item.title || item.file || "Plate")}</strong>
+          <span>${escapeHtml(item.address || "")}</span>
+          <span>${escapeHtml(item.spot || shortAddress(item.imageHash || ""))}</span>
+        </button>
       </li>`
       )
       .join("");
@@ -1188,10 +1192,128 @@ async function encodeCurrentOnXrp() {
   setXrpProgress(8, `Sealing ${photo.title || "plate"}…`);
   try {
     const result = await encodePhotoOnXrp(photo, (pct) => setXrpProgress(Math.max(10, pct), "Reading plate…"));
+    if (result?.spot && els.xrpSpotInput) els.xrpSpotInput.value = result.spot;
     paintXrpLedger(await fetchXrpLedger());
     setXrpProgress(100, result?.address ? `On XRP · ${shortAddress(result.address)}` : "Encoded onto XRP");
   } catch {
     setXrpProgress(0, "Could not encode this plate");
+  } finally {
+    xrpBusy = false;
+    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
+    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+  }
+}
+
+function showSpotReadout(text) {
+  if (!els.xrpSpotReadout) return;
+  els.xrpSpotReadout.hidden = !text;
+  els.xrpSpotReadout.textContent = text || "";
+}
+
+function insertDecodedPlate(photo) {
+  const next = [{ ...photo, featured: true }, ...state.photos.filter((item) => item.id !== photo.id)];
+  next.forEach((item, index) => {
+    item.index = index;
+    item.featured = index === 0;
+  });
+  state.photos = next;
+  if (!state.categories.some((cat) => cat.id === "xrp")) {
+    state.categories = [...state.categories, { id: "xrp", label: "XRP" }];
+  }
+  renderFilters();
+  renderHero();
+  renderCatalog();
+  openViewer(photo.id);
+}
+
+async function decodeXrpSpot(code) {
+  const spot = String(code || els.xrpSpotInput?.value || "").trim();
+  if (!spot) {
+    setXrpProgress(0, "Paste a spot code to decode");
+    return;
+  }
+  if (els.xrpSpotInput) els.xrpSpotInput.value = spot;
+  xrpBusy = true;
+  setXrpProgress(12, "Reading ledger spot…");
+  try {
+    let located = null;
+    if (window.ApertureAndroid?.xrpDecode) {
+      located = JSON.parse(window.ApertureAndroid.xrpDecode(spot) || "{}");
+    }
+    if (!located?.ok) {
+      try {
+        const response = await fetch("/api/xrp/decode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spot }),
+        });
+        if (response.ok) located = await response.json();
+      } catch {
+        located = null;
+      }
+    }
+    if (!located?.ok) {
+      try {
+        const response = await fetch(`/api/xrp/spot?c=${encodeURIComponent(spot)}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (response.ok) located = await response.json();
+      } catch {
+        located = null;
+      }
+    }
+    if (!located?.ok) {
+      located = await xrp.decodeSpot(spot, xrp.loadSecret());
+      if (located?.ok) {
+        const envelope = xrp.loadEnvelope(located.address);
+        if (envelope) {
+          const unlocked = await xrp.decodePlate(envelope, xrp.loadSecret());
+          if (unlocked) {
+            const blob = new Blob([unlocked.plain], { type: "application/octet-stream" });
+            const src = URL.createObjectURL(blob);
+            state.blobUrls.push(src);
+            located.src = src;
+            located.decoded = true;
+          }
+        }
+        const cert = (xrp.loadLedger().plates || []).find(
+          (item) => item.address === located.address || item.imageHash === located.imageHash
+        );
+        located.certificate = cert || {};
+        located.title = cert?.title || "XRP plate";
+      }
+    }
+    if (!located?.ok) {
+      setXrpProgress(0, "Could not decode that spot");
+      showSpotReadout("");
+      return;
+    }
+    showSpotReadout(`Account ${located.catalogAddress || located.account} → ${located.address || located.destination}`);
+    setXrpProgress(70, "Opening plate from ledger spot…");
+    let src = located.src || "";
+    if (!src && located.address) src = `/media/xrp/${located.address}`;
+    if (!src) {
+      setXrpProgress(100, `Spot ${shortAddress(located.address)} — sealed image not on this device`);
+      return;
+    }
+    const photo = {
+      id: `xrp/${located.address}`,
+      title: located.title || located.certificate?.title || "XRP plate",
+      photographer: "XRP cipher",
+      location: located.address,
+      year: new Date().getFullYear(),
+      category: "xrp",
+      src,
+      thumb: src,
+      hero: src,
+      local: true,
+      featured: true,
+    };
+    insertDecodedPlate(photo);
+    closeXrpLedger();
+    setXrpProgress(100, `Decoded ${shortAddress(located.address)}`);
+  } catch {
+    setXrpProgress(0, "Could not decode that spot");
   } finally {
     xrpBusy = false;
     if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
@@ -1242,6 +1364,10 @@ function onKey(event) {
     if (event.key === "Escape") {
       event.preventDefault();
       closeXrpLedger();
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void decodeXrpSpot();
     }
     return;
   }
@@ -1745,8 +1871,16 @@ async function wire() {
   els.xrpBar?.addEventListener("click", () => void encodeCatalogOnXrp());
   document.getElementById("xrpEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnXrp());
   document.getElementById("xrpEncodePlate")?.addEventListener("click", () => void encodeCurrentOnXrp());
+  document.getElementById("xrpDecode")?.addEventListener("click", () => void decodeXrpSpot());
   document.getElementById("xrpDownload")?.addEventListener("click", downloadXrpLedger);
   document.getElementById("xrpClose")?.addEventListener("click", closeXrpLedger);
+  els.xrpList?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-spot]");
+    if (!btn) return;
+    const spot = btn.dataset.spot || "";
+    if (els.xrpSpotInput) els.xrpSpotInput.value = spot;
+    if (spot) void decodeXrpSpot(spot);
+  });
   els.xrpLedger?.addEventListener("click", (event) => {
     if (event.target === els.xrpLedger) closeXrpLedger();
   });

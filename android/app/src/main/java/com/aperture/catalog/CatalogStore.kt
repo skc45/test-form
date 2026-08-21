@@ -461,6 +461,7 @@ class CatalogStore(private val context: Context) {
                     ),
                 ),
         )
+        cert.put("spot", encodeXrpSpot(imageHash, secret))
         val vault = File(xrpVaultDir(), "$address.apxr")
         vault.writeBytes(envelope)
         rememberXrpCertificate(cert)
@@ -470,6 +471,138 @@ class CatalogStore(private val context: Context) {
             .put("address", address)
             .put("catalogAddress", catalog)
             .put("vault", vault.name)
+            .put("spot", cert.optString("spot"))
+    }
+
+    fun xrpDecode(code: String): JSONObject {
+        return resolveSpot(code)
+    }
+
+    fun xrpSpotResponse(code: String): WebResourceResponse {
+        return json(resolveSpot(code))
+    }
+
+    fun resolveSpot(code: String): JSONObject {
+        val located = decodeXrpSpot(code) ?: return JSONObject().put("ok", false).put("error", "invalid spot")
+        val cert = lookupXrpCertificate(located.optString("address"), located.optString("imageHash"))
+        val decoded = decodeVault(located.optString("address"))
+        located.put("certificate", cert ?: JSONObject())
+        located.put("title", cert?.optString("title")?.ifBlank { "XRP plate" } ?: "XRP plate")
+        located.put("file", cert?.optString("file") ?: "plate")
+        located.put("mime", cert?.optString("mime") ?: "application/octet-stream")
+        located.put("src", if (decoded != null) "/media/xrp/" + located.optString("address") else "")
+        located.put("decoded", decoded != null)
+        return located
+    }
+
+    fun xrpMediaResponse(address: String): WebResourceResponse {
+        val decoded = decodeVault(address) ?: return notFound()
+        val cert = lookupXrpCertificate(address, "")
+        val mime = cert?.optString("mime").orEmpty().ifBlank { mimeFor(cert?.optString("file").orEmpty()) }
+        return WebResourceResponse(
+            mime,
+            "UTF-8",
+            200,
+            "OK",
+            mapOf("Cache-Control" to "no-store", "Content-Type" to mime),
+            ByteArrayInputStream(decoded),
+        )
+    }
+
+    private fun encodeXrpSpot(imageHash: ByteArray, secret: ByteArray): String {
+        val dest = sha256(imageHash + XRP_PLATE + secret).copyOf(20)
+        val catalog = sha256(XRP_CATALOG + secret).copyOf(20)
+        val payload = dest + catalog + imageHash
+        val nonce = ByteArray(XRP_NONCE)
+        SecureRandom().nextBytes(nonce)
+        val key = sha256(secret + nonce + SPOT_LABEL)
+        val cipher = xorSeal(payload, key)
+        val tag = hmacSha256(sha256(SPOT_LABEL + secret), nonce + cipher)
+        val envelope = SPOT_MAGIC + byteArrayOf(XRP_VERSION) + nonce + tag + cipher
+        return SPOT_PREFIX + b58encode(envelope)
+    }
+
+    private fun decodeXrpSpot(code: String): JSONObject? {
+        var raw = code.trim()
+        if (raw.lowercase().startsWith(SPOT_PREFIX)) raw = raw.substring(SPOT_PREFIX.length)
+        val packed = b58decode(raw) ?: return null
+        val header = 5 + XRP_NONCE + 32
+        if (packed.size < header + SPOT_PAYLOAD) return null
+        if (packed[0] != SPOT_MAGIC[0] || packed[1] != SPOT_MAGIC[1] || packed[2] != SPOT_MAGIC[2] || packed[3] != SPOT_MAGIC[3] || packed[4] != XRP_VERSION) {
+            return null
+        }
+        val nonce = packed.copyOfRange(5, 5 + XRP_NONCE)
+        val tag = packed.copyOfRange(5 + XRP_NONCE, header)
+        val cipher = packed.copyOfRange(header, packed.size)
+        val expected = hmacSha256(sha256(SPOT_LABEL + xrpSecret()), nonce + cipher)
+        if (!expected.contentEquals(tag)) return null
+        val payload = xorSeal(cipher, sha256(xrpSecret() + nonce + SPOT_LABEL))
+        if (payload.size < SPOT_PAYLOAD) return null
+        val address = classicXrpAddress(payload.copyOfRange(0, 20))
+        val catalog = classicXrpAddress(payload.copyOfRange(20, 40))
+        val imageHash = payload.copyOfRange(40, 72)
+        return JSONObject()
+            .put("ok", true)
+            .put("kind", "aperture-xrp-spot")
+            .put("ledger", "xrpl")
+            .put("address", address)
+            .put("catalogAddress", catalog)
+            .put("destination", address)
+            .put("account", catalog)
+            .put("imageHash", toHex(imageHash))
+            .put("spot", if (code.trim().lowercase().startsWith(SPOT_PREFIX)) code.trim() else SPOT_PREFIX + raw)
+    }
+
+    private fun lookupXrpCertificate(address: String, imageHash: String): JSONObject? {
+        val digest = imageHash.uppercase()
+        val plates = xrpPlates()
+        for (i in 0 until plates.length()) {
+            val item = plates.getJSONObject(i)
+            if (address.isNotBlank() && item.optString("address") == address) return item
+            if (digest.isNotBlank() && item.optString("imageHash").uppercase() == digest) return item
+        }
+        return null
+    }
+
+    private fun decodeVault(address: String): ByteArray? {
+        val name = address.substringAfterLast('/').ifBlank { return null }
+        val file = File(xrpVaultDir(), "$name.apxr")
+        if (!file.isFile) return null
+        return decodeXrpEnvelope(file.readBytes())
+    }
+
+    private fun decodeXrpEnvelope(data: ByteArray, secret: ByteArray = xrpSecret()): ByteArray? {
+        val header = 5 + XRP_NONCE + 64
+        if (data.size < header) return null
+        if (data[0] != XRP_MAGIC[0] || data[1] != XRP_MAGIC[1] || data[2] != XRP_MAGIC[2] || data[3] != XRP_MAGIC[3] || data[4] != XRP_VERSION) {
+            return null
+        }
+        val nonce = data.copyOfRange(5, 5 + XRP_NONCE)
+        val imageHash = data.copyOfRange(5 + XRP_NONCE, 5 + XRP_NONCE + 32)
+        val tag = data.copyOfRange(5 + XRP_NONCE + 32, header)
+        val cipher = data.copyOfRange(header, data.size)
+        val expected = hmacSha256(sha256(XRP_LABEL + secret), nonce + imageHash + cipher)
+        if (!expected.contentEquals(tag)) return null
+        val plain = xorSeal(cipher, sha256(secret + nonce + imageHash))
+        if (!sha256(plain).contentEquals(imageHash)) return null
+        return plain
+    }
+
+    private fun b58decode(text: String): ByteArray? {
+        var zeros = 0
+        for (ch in text) {
+            if (ch == XRP_ALPHABET[0]) zeros += 1 else break
+        }
+        var number = BigInteger.ZERO
+        val base = BigInteger.valueOf(58)
+        for (ch in text) {
+            val index = XRP_ALPHABET.indexOf(ch)
+            if (index < 0) return null
+            number = number.multiply(base).add(BigInteger.valueOf(index.toLong()))
+        }
+        val signed = if (number == BigInteger.ZERO) ByteArray(0) else number.toByteArray()
+        val body = if (signed.isNotEmpty() && signed[0] == 0.toByte()) signed.copyOfRange(1, signed.size) else signed
+        return ByteArray(zeros) { 0 } + body
     }
 
     private fun stableCertJson(cert: JSONObject): String {
@@ -787,6 +920,10 @@ class CatalogStore(private val context: Context) {
         private val XRP_LABEL = "aperture-xrp-cipher-v1".toByteArray(StandardCharsets.UTF_8)
         private val XRP_PLATE = "xrpl-plate".toByteArray(StandardCharsets.UTF_8)
         private val XRP_CATALOG = "xrpl-catalog".toByteArray(StandardCharsets.UTF_8)
+        private val SPOT_MAGIC = byteArrayOf(0x41, 0x50, 0x58, 0x53)
+        private val SPOT_LABEL = "aperture-xrp-spot-v1".toByteArray(StandardCharsets.UTF_8)
+        private const val SPOT_PREFIX = "apxs1:"
+        private const val SPOT_PAYLOAD = 72
         private const val XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",

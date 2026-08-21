@@ -172,7 +172,7 @@
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Tap Encode onto XRP to seal photographs as XRPL memos.</p>
+        <p class="help-foot">Open a folder to browse plates. Encode onto XRP, then paste an apxs1: spot code to decode the plate from that ledger location.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -250,12 +250,18 @@
         <p class="xrp-status" id="xrpStatus">Seal plates and write their fingerprints as XRPL memos.</p>
         <p class="xrp-address" id="xrpCatalogAddress" hidden></p>
         <ol class="xrp-list" id="xrpList"></ol>
+        <label class="xrp-spot-field">
+          <span class="sr-only">Ledger spot</span>
+          <input id="xrpSpotInput" type="text" placeholder="Paste apxs1: spot code…" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="xrp-spot-readout" id="xrpSpotReadout" hidden></p>
         <div class="download-track post-track" id="xrpTrack" hidden>
           <span class="download-fill" id="xrpFill"></span>
         </div>
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="xrpEncodeCatalog" type="button">Encode catalog</button>
           <button class="text-btn" id="xrpEncodePlate" type="button">Encode this plate</button>
+          <button class="text-btn" id="xrpDecode" type="button">Decode spot</button>
           <button class="text-btn" id="xrpDownload" type="button">Download ledger</button>
           <button class="text-btn" id="xrpClose" type="button">Close</button>
         </div>

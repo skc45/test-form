@@ -104,6 +104,14 @@ class MainActivity : AppCompatActivity() {
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
                         path == "/api/xrp" && request.method == "GET" -> store.xrpResponse()
+                        path == "/api/xrp/spot" && request.method == "GET" -> {
+                            val code = url.getQueryParameter("c") ?: url.getQueryParameter("code").orEmpty()
+                            store.xrpSpotResponse(code)
+                        }
+                        path.startsWith("/media/xrp/") -> {
+                            val rel = Uri.decode(path.removePrefix("/media/xrp/"))
+                            store.xrpMediaResponse(rel)
+                        }
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
                             val plate = url.getQueryParameter("p")?.toIntOrNull() ?: 0
@@ -222,6 +230,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun xrpLedger(): String {
             return store.xrpLedger().toString()
+        }
+
+        @JavascriptInterface
+        fun xrpDecode(code: String): String {
+            return store.xrpDecode(code).toString()
         }
 
         @JavascriptInterface

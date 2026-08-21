@@ -5,6 +5,7 @@ import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 from sys import path as sys_path
+from urllib.parse import quote
 
 sys_path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -439,6 +440,28 @@ class XrpCipherTests(unittest.TestCase):
         listing = app.list_xrp()
         self.assertEqual(listing["count"], 1)
         self.assertEqual(listing["plates"][0]["address"], address)
+        self.assertTrue(result["spot"].startswith("apxs1:"))
+        self.assertEqual(listing["plates"][0]["spot"], result["spot"])
+
+    def test_spot_cipher_points_at_ledger_and_unlocks(self):
+        result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
+        spot = result["spot"]
+        self.assertTrue(spot.startswith("apxs1:"))
+        located = app.decode_spot(spot)
+        self.assertIsNotNone(located)
+        self.assertEqual(located["address"], result["address"])
+        self.assertEqual(located["catalogAddress"], result["catalogAddress"])
+        self.assertEqual(located["imageHash"], result["certificate"]["imageHash"])
+        self.assertEqual(located["destination"], result["address"])
+        self.assertEqual(located["account"], result["catalogAddress"])
+        resolved = app.resolve_spot(spot)
+        self.assertTrue(resolved["ok"])
+        self.assertTrue(resolved["decoded"])
+        self.assertEqual(resolved["src"], "/media/xrp/" + result["address"])
+        self.assertEqual(resolved["title"], "Ridge")
+        self.assertIsNone(app.decode_spot("apxs1:not-a-real-spot"))
+        mutated = spot[:-1] + ("2" if spot[-1] != "2" else "3")
+        self.assertIsNone(app.decode_spot(mutated))
 
     def test_tamper_rejects_decode(self):
         result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
@@ -487,6 +510,34 @@ class XrpCipherTests(unittest.TestCase):
             foldered = json.loads(conn.getresponse().read())
             conn.close()
             self.assertGreaterEqual(foldered["count"], 1)
+            self.assertTrue(posted["spot"].startswith("apxs1:"))
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request(
+                "POST",
+                "/api/xrp/decode",
+                json.dumps({"spot": posted["spot"]}),
+                {"Content-Type": "application/json"},
+            )
+            decoded = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertTrue(decoded["ok"])
+            self.assertEqual(decoded["address"], posted["address"])
+            self.assertTrue(decoded["decoded"])
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/xrp/spot?c=" + quote(posted["spot"], safe=""))
+            spotted = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertEqual(spotted["address"], posted["address"])
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/media/xrp/" + posted["address"])
+            media = conn.getresponse()
+            payload = media.read()
+            conn.close()
+            self.assertEqual(media.status, 200)
+            self.assertEqual(payload, TINY_PNG)
         finally:
             server.shutdown()
             server.server_close()
