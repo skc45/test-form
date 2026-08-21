@@ -22,6 +22,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("recent-tabs", app_js)
         self.assertIn("openRecents", app_js)
         self.assertIn("selectedIds", app_js)
+        self.assertIn("is-selected", app_js)
         self.assertIn("downloadCurrent", app_js)
         self.assertIn("apertureDownloadProgress", app_js)
         self.assertIn("openPostForm", app_js)
@@ -44,9 +45,16 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("recent-tabs", css)
         self.assertIn("download-bar", css)
         self.assertIn("post-form", css)
-        self.assertIn("is-together", css)
+        self.assertIn("is-selected", css)
+        self.assertIn("flex: 1 1 0", css)
+        self.assertIn("grid-template-columns: 1fr", css)
+        self.assertNotIn("is-together", css)
         self.assertIn("header-plate", css)
         self.assertIn("MAX_RECENTS = 3", data)
+        app_js = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("state.selectedIds = [nextId]", app_js)
+        self.assertNotIn("aria-multiselectable", app_js)
+        self.assertIn("is-selected", app_js)
 
     def test_installable_apk_is_present(self):
         apk = ROOT / "releases" / "Aperture.apk"
