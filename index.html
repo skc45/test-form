@@ -166,13 +166,13 @@
           <div><dt>C</dt><dd>Fit or fill</dd></div>
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
-          <div><dt>Long-press</dt><dd>Attach as NFT</dd></div>
+          <div><dt>Long-press</dt><dd>Crop, then attach as NFT</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Long-press a plate to attach it as an NFT on an Ethereum shard, then paste an eths: pointer or 0x address to open that token.</p>
+        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then attach the crop as an NFT on an Ethereum shard.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -194,6 +194,29 @@
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="openerFolderBtn" type="button">Choose folder</button>
           <button class="text-btn" id="demoBtn" type="button">View demo catalog</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="crop-form" id="cropForm" hidden>
+      <div class="crop-card">
+        <p class="help-kicker">Send</p>
+        <h2>Crop</h2>
+        <div class="crop-stage" id="cropStage">
+          <div class="crop-frame" id="cropFrame">
+            <img id="cropImage" alt="" draggable="false" />
+            <div class="crop-box" id="cropBox">
+              <span class="crop-handle" data-handle="nw"></span>
+              <span class="crop-handle" data-handle="ne"></span>
+              <span class="crop-handle" data-handle="sw"></span>
+              <span class="crop-handle" data-handle="se"></span>
+            </div>
+          </div>
+        </div>
+        <p class="crop-status" id="cropStatus">Drag the frame to crop</p>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="cropApply" type="button">Crop</button>
+          <button class="text-btn" id="cropCancel" type="button">Cancel</button>
         </div>
       </div>
     </div>

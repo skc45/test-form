@@ -95,6 +95,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Open folder", body)
         self.assertIn(b"Tap to download", body)
         self.assertIn(b"Attach as NFT", body)
+        self.assertIn(b"Crop, then attach as NFT", body)
+        self.assertIn(b'id="cropForm"', body)
         self.assertIn(b'id="postForm"', body)
         self.assertIn(b"Send as a post", body)
         self.assertNotIn(b"New post", body)

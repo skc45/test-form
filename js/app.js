@@ -72,6 +72,10 @@ const els = {
   postStatus: document.getElementById("postStatus"),
   postTrack: document.getElementById("postTrack"),
   postFill: document.getElementById("postFill"),
+  cropForm: document.getElementById("cropForm"),
+  cropImage: document.getElementById("cropImage"),
+  cropBox: document.getElementById("cropBox"),
+  cropStatus: document.getElementById("cropStatus"),
   postSend: document.getElementById("postSend"),
   postShare: document.getElementById("postShare"),
   themeBtn: document.getElementById("themeBtn"),
@@ -103,6 +107,11 @@ let postBusy = false;
 let ethBusy = false;
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
+const crop = {
+  photo: null,
+  norm: null,
+  drag: null,
+};
 
 function slug(value) {
   return String(value || "folder")
@@ -421,7 +430,7 @@ function renderCatalog() {
       if (longPressConsumed()) return;
       openViewer(photo.id);
     });
-    attachLongPress(card, () => openPostForm(photo));
+    attachLongPress(card, () => openCrop(photo));
   });
 }
 
@@ -442,7 +451,7 @@ function renderFilmstrip(photos) {
       if (longPressConsumed()) return;
       showIndex(i);
     });
-    attachLongPress(thumb, () => openPostForm(photos[i]));
+    attachLongPress(thumb, () => openCrop(photos[i]));
   });
   const selected = els.filmstrip.querySelector('[aria-selected="true"]');
   selected?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
@@ -1125,12 +1134,26 @@ async function encodePhotoOnEth(photo, onProgress) {
   const filename = downloadFilename(photo);
   const title = photo.title || filename;
   if (window.ApertureAndroid?.ethEncode) {
+    let src = photo.src;
+    if (String(src || "").startsWith("blob:")) {
+      const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
+      src = await blobToDataUrl(blob);
+    }
     onProgress?.(40);
-    return JSON.parse(window.ApertureAndroid.ethEncode(photo.src, filename, title) || "{}");
+    return JSON.parse(window.ApertureAndroid.ethEncode(src, filename, title) || "{}");
   }
   const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
   const bytes = new Uint8Array(await blob.arrayBuffer());
   return encodeBytesOnEth(bytes, title, filename, blob.type);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("read failed"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function encodeCatalogOnEth() {
@@ -1369,6 +1392,13 @@ function onHash() {
 }
 
 function onKey(event) {
+  if (els.cropForm && !els.cropForm.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCrop();
+    }
+    return;
+  }
   if (els.postForm && !els.postForm.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1651,6 +1681,169 @@ function attachLongPress(el, onLong) {
   );
 }
 
+function defaultCropNorm() {
+  const img = els.cropImage;
+  const w = img?.clientWidth || 1;
+  const h = img?.clientHeight || 1;
+  const side = Math.min(w, h) * 0.86;
+  return { x: (w - side) / 2 / w, y: (h - side) / 2 / h, w: side / w, h: side / h };
+}
+
+function clampCrop(next) {
+  let { x, y, w, h } = next;
+  const min = 0.08;
+  w = Math.max(min, Math.min(1, w));
+  h = Math.max(min, Math.min(1, h));
+  x = Math.max(0, Math.min(1 - w, x));
+  y = Math.max(0, Math.min(1 - h, y));
+  return { x, y, w, h };
+}
+
+function paintCropBox() {
+  const img = els.cropImage;
+  const box = els.cropBox;
+  if (!img || !box || !crop.norm) return;
+  const w = img.clientWidth;
+  const h = img.clientHeight;
+  if (!w || !h) return;
+  box.style.left = `${crop.norm.x * w}px`;
+  box.style.top = `${crop.norm.y * h}px`;
+  box.style.width = `${crop.norm.w * w}px`;
+  box.style.height = `${crop.norm.h * h}px`;
+}
+
+function openCrop(photo) {
+  if (!photo || !els.cropForm) return;
+  window.clearTimeout(longPress.timer);
+  crop.photo = photo;
+  crop.norm = null;
+  crop.drag = null;
+  if (els.cropStatus) els.cropStatus.textContent = "Drag the frame to crop";
+  els.cropForm.hidden = false;
+  const src = photo.hero || photo.src || photo.thumb;
+  if (els.cropImage) {
+    els.cropImage.onload = () => {
+      if (!crop.norm) crop.norm = defaultCropNorm();
+      paintCropBox();
+    };
+    els.cropImage.src = src;
+    if (els.cropImage.complete && els.cropImage.naturalWidth) {
+      if (!crop.norm) crop.norm = defaultCropNorm();
+      paintCropBox();
+    }
+  }
+  void (async () => {
+    try {
+      const blob = await plateBlob(photo, () => {});
+      const url = URL.createObjectURL(blob);
+      state.blobUrls.push(url);
+      if (crop.photo === photo && els.cropImage) els.cropImage.src = url;
+    } catch {
+      /* keep original src */
+    }
+  })();
+}
+
+function closeCrop() {
+  if (els.cropForm) els.cropForm.hidden = true;
+  crop.photo = null;
+  crop.norm = null;
+  crop.drag = null;
+}
+
+function startCropDrag(event) {
+  if (!crop.norm || !els.cropImage) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  const handle = event.target?.dataset?.handle || "move";
+  crop.drag = {
+    handle,
+    start: { ...crop.norm, px: event.clientX, py: event.clientY },
+    imgW: els.cropImage.clientWidth || 1,
+    imgH: els.cropImage.clientHeight || 1,
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function moveCropDrag(event) {
+  if (!crop.drag) return;
+  const dx = (event.clientX - crop.drag.start.px) / crop.drag.imgW;
+  const dy = (event.clientY - crop.drag.start.py) / crop.drag.imgH;
+  const { x, y, w, h } = crop.drag.start;
+  const handle = crop.drag.handle;
+  let next = { x, y, w, h };
+  if (handle === "move") next = { x: x + dx, y: y + dy, w, h };
+  else if (handle === "nw") next = { x: x + dx, y: y + dy, w: w - dx, h: h - dy };
+  else if (handle === "ne") next = { x, y: y + dy, w: w + dx, h: h - dy };
+  else if (handle === "sw") next = { x: x + dx, y, w: w - dx, h: h + dy };
+  else if (handle === "se") next = { x, y, w: w + dx, h: h + dy };
+  crop.norm = clampCrop(next);
+  paintCropBox();
+}
+
+function endCropDrag() {
+  crop.drag = null;
+}
+
+function cropMime(photo) {
+  const src = String(photo?.src || photo?.file || "");
+  if (/\.png(\?|$)/i.test(src) || String(photo?.mime || "").includes("png")) return "image/png";
+  return "image/jpeg";
+}
+
+function canvasToBlob(canvas, type) {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("empty crop"))), type, 0.92);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+async function applyCrop() {
+  const photo = crop.photo;
+  const img = els.cropImage;
+  if (!photo || !img?.naturalWidth || !crop.norm) {
+    if (els.cropStatus) els.cropStatus.textContent = "Wait for the plate to load";
+    return;
+  }
+  const sx = Math.round(crop.norm.x * img.naturalWidth);
+  const sy = Math.round(crop.norm.y * img.naturalHeight);
+  const sw = Math.max(1, Math.round(crop.norm.w * img.naturalWidth));
+  const sh = Math.max(1, Math.round(crop.norm.h * img.naturalHeight));
+  const scale = Math.min(1, 2048 / Math.max(sw, sh));
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = dw;
+  canvas.height = dh;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+  try {
+    const mime = cropMime(photo);
+    const blob = await canvasToBlob(canvas, mime);
+    const url = URL.createObjectURL(blob);
+    state.blobUrls.push(url);
+    const ext = mime === "image/png" ? ".png" : ".jpg";
+    const cropped = {
+      ...photo,
+      id: `crop/${photo.id}`,
+      src: url,
+      thumb: url,
+      hero: url,
+      local: true,
+      mime,
+      title: photo.title || "Plate",
+      file: `${slug(photo.title || "plate")}-crop${ext}`,
+    };
+    closeCrop();
+    openPostForm(cropped);
+  } catch {
+    if (els.cropStatus) els.cropStatus.textContent = "Could not crop this plate";
+  }
+}
+
 function openPostForm(photo) {
   if (!photo || !els.postForm) return;
   window.clearTimeout(longPress.timer);
@@ -1916,11 +2109,23 @@ async function wire() {
   els.downloadBar?.addEventListener("click", downloadCurrent);
   attachLongPress(els.downloadBar, () => {
     const photo = visiblePhotos()[state.activeIndex];
-    if (photo) openPostForm(photo);
+    if (photo) openCrop(photo);
   });
   attachLongPress(els.heroBtn, () => {
     const featured = state.photos.find((p) => p.featured) || state.photos[0];
-    if (featured) openPostForm(featured);
+    if (featured) openCrop(featured);
+  });
+  document.getElementById("cropApply")?.addEventListener("click", () => void applyCrop());
+  document.getElementById("cropCancel")?.addEventListener("click", closeCrop);
+  els.cropForm?.addEventListener("click", (event) => {
+    if (event.target === els.cropForm) closeCrop();
+  });
+  els.cropBox?.addEventListener("pointerdown", startCropDrag);
+  els.cropBox?.addEventListener("pointermove", moveCropDrag);
+  els.cropBox?.addEventListener("pointerup", endCropDrag);
+  els.cropBox?.addEventListener("pointercancel", endCropDrag);
+  window.addEventListener("resize", () => {
+    if (els.cropForm && !els.cropForm.hidden) paintCropBox();
   });
   els.postCard?.addEventListener("submit", sendNft);
   document.getElementById("postShare")?.addEventListener("click", (event) => void sendPost(event));
@@ -1993,7 +2198,7 @@ async function wire() {
       const photo = visiblePhotos()[state.activeIndex];
       if (!photo) return;
       markLongPress();
-      openPostForm(photo);
+      openCrop(photo);
     }, 480);
     if (state.zoom === 1) {
       swipe = { x: event.clientX, t: Date.now() };
@@ -2072,6 +2277,10 @@ function apertureHandleBack() {
   }
   if (els.ethShard && !els.ethShard.hidden) {
     closeEthOverlay();
+    return true;
+  }
+  if (els.cropForm && !els.cropForm.hidden) {
+    closeCrop();
     return true;
   }
   if (els.postForm && !els.postForm.hidden) {

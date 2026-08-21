@@ -380,6 +380,13 @@ class CatalogStore(private val context: Context) {
     }
 
     fun ethEncode(url: String, filename: String, title: String): JSONObject {
+        if (url.startsWith("data:")) {
+            val bytes = decodeDataUrl(url) ?: return JSONObject().put("ok", false)
+            if (bytes.isEmpty() || bytes.size > ETH_MAX_PLATE) return JSONObject().put("ok", false)
+            val name = filename.substringAfterLast('/').ifBlank { "plate.jpg" }
+            val mime = mimeFromDataUrl(url).ifBlank { mimeFor(name) }
+            return encodeEthPlate(bytes, title.ifBlank { name.substringBeforeLast('.') }, name, mime)
+        }
         val dest = File(context.cacheDir, "eth-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
         dest.parentFile?.mkdirs()
         if (!exportToFile(url, dest) { }) return JSONObject().put("ok", false)
@@ -689,6 +696,22 @@ class CatalogStore(private val context: Context) {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun decodeDataUrl(url: String): ByteArray? {
+        val comma = url.indexOf(',')
+        if (!url.startsWith("data:") || comma < 0) return null
+        return try {
+            android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun mimeFromDataUrl(url: String): String {
+        val header = url.substringBefore(',')
+        val mime = header.removePrefix("data:").substringBefore(';').substringBefore(',')
+        return mime.trim()
     }
 
     private fun hasPermission(uri: Uri): Boolean {
