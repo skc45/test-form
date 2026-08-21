@@ -159,6 +159,7 @@
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Send as a post</dd></div>
           <div><dt>B</dt><dd>Blockchain monitor</dd></div>
+          <div><dt>Send sync</dt><dd>Share chain with another device</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
@@ -220,12 +221,15 @@
         <ol class="chain-list chain-files" id="chainFiles" hidden></ol>
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="chainUnlock" type="button">Unlock folder</button>
+          <button class="text-btn" id="chainSend" type="button">Send sync</button>
+          <button class="text-btn" id="chainReceive" type="button">Receive sync</button>
           <button class="text-btn" id="chainClose" type="button">Close</button>
         </div>
       </div>
     </div>
     <input id="vaultInput" type="file" accept=".apc,.aplate,application/octet-stream" multiple hidden />
     <input id="vaultFolderInput" type="file" webkitdirectory directory multiple hidden />
+    <input id="syncInput" type="file" accept=".apsync,application/octet-stream" hidden />
 
     <script type="module" src="js/app.js"></script>
   </body>

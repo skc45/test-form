@@ -31,6 +31,8 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownload: Pair<String, String>? = null
     private var pickingVault = false
+    private var pageReady = false
+    private var pendingIncoming: Uri? = null
 
     private val requestWrite = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -62,6 +64,23 @@ class MainActivity : AppCompatActivity() {
     ) { uris ->
         filePathCallback?.onReceiveValue(uris.toTypedArray())
         filePathCallback = null
+    }
+
+    private val pickSync = registerForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        Thread {
+            val data = try {
+                store.receiveSyncUri(uri)
+            } catch (_: Exception) {
+                org.json.JSONObject().put("ok", false)
+            }
+            runOnUiThread {
+                if (data.optBoolean("ok")) notifyVault()
+                else notifySyncError()
+            }
+        }.start()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -112,6 +131,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         path == "/api/chain" && request.method == "GET" -> store.chainResponse()
                         path == "/api/vault" && request.method == "GET" -> store.vaultResponse()
+                        path == "/api/sync" && request.method == "GET" -> store.syncResponse()
                         path.startsWith("/media/vault/") -> {
                             val rel = Uri.decode(path.removePrefix("/media/vault/"))
                             store.vaultMediaResponse(rel)
@@ -126,6 +146,14 @@ class MainActivity : AppCompatActivity() {
                             store.mediaResponse(rel)
                         }
                         else -> assetLoader.shouldInterceptRequest(url)
+                    }
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    pageReady = true
+                    pendingIncoming?.let { uri ->
+                        pendingIncoming = null
+                        importIncoming(uri)
                     }
                 }
             }
@@ -144,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(webView)
         webView.loadUrl("https://$HOST/assets/www/index.html?mode=app")
+        handleIncoming(intent)
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -169,6 +198,13 @@ class MainActivity : AppCompatActivity() {
     private fun notifyVault() {
         webView.evaluateJavascript(
             "window.dispatchEvent(new Event('aperture-native-vault'))",
+            null,
+        )
+    }
+
+    private fun notifySyncError() {
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new Event('aperture-native-sync-error'))",
             null,
         )
     }
@@ -251,6 +287,20 @@ class MainActivity : AppCompatActivity() {
         fun encodeFolder(): String {
             return store.encodeFolder().toString()
         }
+
+        @JavascriptInterface
+        fun shareSync() {
+            runOnUiThread {
+                startShareSync()
+            }
+        }
+
+        @JavascriptInterface
+        fun receiveSync() {
+            runOnUiThread {
+                pickSync.launch("*/*")
+            }
+        }
     }
 
     private fun startDownload(url: String, filename: String) {
@@ -309,6 +359,73 @@ class MainActivity : AppCompatActivity() {
                 }
                 startActivity(Intent.createChooser(send, "Send plate"))
                 notifyPost(100)
+            }
+        }.start()
+    }
+
+    private fun startShareSync() {
+        Thread {
+            val dest = try {
+                store.writeSyncPack()
+            } catch (_: Exception) {
+                null
+            }
+            if (dest == null || !dest.exists()) {
+                notifySyncError()
+                return@Thread
+            }
+            runOnUiThread {
+                val uri = FileProvider.getUriForFile(this, "$packageName.files", dest)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/octet-stream"
+                    clipData = android.content.ClipData.newUri(contentResolver, "sync", uri)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "Aperture chain sync")
+                    putExtra(Intent.EXTRA_TEXT, "Receive this pack in Aperture with Receive sync.")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Send chain"))
+            }
+        }.start()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncoming(intent)
+    }
+
+    private fun incomingUri(intent: Intent?): Uri? {
+        if (intent == null) return null
+        return when (intent.action) {
+            Intent.ACTION_SEND -> {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+            }
+            Intent.ACTION_VIEW -> intent.data
+            else -> null
+        }
+    }
+
+    private fun handleIncoming(intent: Intent?) {
+        val uri = incomingUri(intent) ?: return
+        if (pageReady) importIncoming(uri) else pendingIncoming = uri
+    }
+
+    private fun importIncoming(uri: Uri) {
+        Thread {
+            val data = try {
+                store.receiveSyncUri(uri)
+            } catch (_: Exception) {
+                org.json.JSONObject().put("ok", false)
+            }
+            runOnUiThread {
+                if (data.optBoolean("ok")) notifyVault()
+                else notifySyncError()
             }
         }.start()
     }

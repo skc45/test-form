@@ -186,6 +186,7 @@ class CatalogStore(private val context: Context) {
             val root = DocumentFile.fromTreeUri(context, tree) ?: return@forEachIndexed
             val folderName = root.name ?: "Folder"
             walk(root, folderName, "", if (multi) "$index/" else "")
+            importChainFromTree(tree)
         }
         photos.forEachIndexed { index, photo ->
             photo.put("index", index)
@@ -354,6 +355,7 @@ class CatalogStore(private val context: Context) {
         )
         blocks.put(block)
         prefs.edit().putString(KEY_CHAIN, blocks.toString()).apply()
+        persistChainFile()
         return JSONObject()
             .put("ok", true)
             .put("valid", verifyChain(blocks))
@@ -390,6 +392,24 @@ class CatalogStore(private val context: Context) {
             .putString(KEY_VAULT, uri.toString())
             .putString(KEY_VAULT_NAME, name)
             .apply()
+        importChainFromTree(uri)
+    }
+
+    private fun importChainFromTree(tree: Uri) {
+        val root = DocumentFile.fromTreeUri(context, tree) ?: return
+        val chainFile = root.findFile("chain.json")
+            ?: root.listFiles().firstOrNull { it.isDirectory && it.name.equals("blockchain", ignoreCase = true) }?.findFile("chain.json")
+            ?: return
+        val text = readUriBytes(chainFile.uri)?.toString(Charsets.UTF_8) ?: return
+        try {
+            val data = JSONObject(text)
+            val blocks = data.optJSONArray("blocks") ?: return
+            if (!verifyChain(blocks)) return
+            val merged = mergeChains(chainArray(), blocks, true)
+            prefs.edit().putString(KEY_CHAIN, merged.toString()).apply()
+            persistChainFile()
+        } catch (_: Exception) {
+        }
     }
 
     fun chainLock(url: String, filename: String, blockJson: String): JSONObject {
@@ -418,6 +438,7 @@ class CatalogStore(private val context: Context) {
     }
 
     fun encodeFolder(): JSONObject {
+        currentTrees.forEach { importChainFromTree(it) }
         val seen = mutableSetOf<String>()
         val existing = chainArray()
         for (index in 0 until existing.length()) {
@@ -454,10 +475,160 @@ class CatalogStore(private val context: Context) {
             val packed = lockBytes(plain, block, key, title, folderName, entry.second)
             writeVaultFile(name, packed)
             writeLocalVault(key, name, packed)
+            writeLocalChain(key)
             seen += imageHash
             encoded += 1
         }
         return vaultPayload().put("encoded", encoded).put("skipped", skipped)
+    }
+
+    fun writeSyncPack(): File {
+        persistChainFile()
+        val packed = buildSyncPack()
+        val dest = File(context.cacheDir, "share/Aperture-sync.apsync")
+        dest.parentFile?.mkdirs()
+        dest.writeBytes(packed)
+        return dest
+    }
+
+    fun syncResponse(): WebResourceResponse {
+        val packed = buildSyncPack()
+        return WebResourceResponse(
+            "application/octet-stream",
+            null,
+            200,
+            "OK",
+            mapOf(
+                "Content-Disposition" to "attachment; filename=\"Aperture-sync.apsync\"",
+                "Content-Length" to packed.size.toString(),
+                "Cache-Control" to "no-store",
+            ),
+            ByteArrayInputStream(packed),
+        )
+    }
+
+    fun receiveSyncBytes(data: ByteArray): JSONObject {
+        val parsed = parseSyncPack(data) ?: return JSONObject().put("ok", false).put("error", "undecodable")
+        val blocks = parsed.first
+        if (!verifyChain(blocks)) return JSONObject().put("ok", false).put("error", "invalid chain")
+        val merged = mergeChains(chainArray(), blocks, true)
+        prefs.edit().putString(KEY_CHAIN, merged.toString()).apply()
+        persistChainFile()
+        for (plate in parsed.second) {
+            writeVaultFile(plate.first, plate.second)
+        }
+        return vaultPayload().put("ok", true).put("received", parsed.second.size)
+    }
+
+    fun receiveSyncUri(uri: Uri): JSONObject {
+        val bytes = readUriBytes(uri) ?: return JSONObject().put("ok", false)
+        if (bytes.size >= 4 && bytes.copyOfRange(0, 4).contentEquals(SYNC_MAGIC)) {
+            return receiveSyncBytes(bytes)
+        }
+        return JSONObject().put("ok", false).put("error", "undecodable")
+    }
+
+    private fun persistChainFile() {
+        val text = JSONObject()
+            .put("v", 1)
+            .put("kind", "aperture-sync")
+            .put("difficulty", CHAIN_DIFFICULTY)
+            .put("blocks", chainArray())
+            .toString()
+        try {
+            File(defaultVaultDir(), "chain.json").writeText(text)
+        } catch (_: Exception) {
+        }
+        val raw = prefs.getString(KEY_VAULT, "").orEmpty()
+        if (raw.isBlank()) return
+        try {
+            val root = DocumentFile.fromTreeUri(context, Uri.parse(raw)) ?: return
+            root.findFile("chain.json")?.delete()
+            val created = root.createFile("application/json", "chain.json") ?: return
+            context.contentResolver.openOutputStream(created.uri)?.use {
+                it.write(text.toByteArray(StandardCharsets.UTF_8))
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun mergeChains(local: JSONArray, remote: JSONArray, preferRemote: Boolean): JSONArray {
+        if (remote.length() == 0 || !verifyChain(remote)) return local
+        if (local.length() == 0 || !verifyChain(local)) return remote
+        if (local.getJSONObject(0).optString("hash") == remote.getJSONObject(0).optString("hash")) {
+            val shared = minOf(local.length(), remote.length())
+            var samePrefix = true
+            for (index in 0 until shared) {
+                if (local.getJSONObject(index).optString("hash") != remote.getJSONObject(index).optString("hash")) {
+                    samePrefix = false
+                    break
+                }
+            }
+            if (samePrefix) return if (remote.length() >= local.length()) remote else local
+        }
+        return if (preferRemote) remote else local
+    }
+
+    private fun buildSyncPack(): ByteArray {
+        persistChainFile()
+        val plates = listVaultEntries()
+        val blocks = chainArray()
+        val files = JSONArray()
+        for (plate in plates) {
+            files.put(JSONObject().put("name", plate.first).put("size", plate.second.size))
+        }
+        val header = JSONObject()
+            .put("v", 1)
+            .put("kind", "aperture-sync")
+            .put("difficulty", CHAIN_DIFFICULTY)
+            .put("height", if (blocks.length() > 0) blocks.getJSONObject(blocks.length() - 1).optInt("height") else 0)
+            .put("blocks", blocks)
+            .put("files", files)
+            .toString()
+            .toByteArray(StandardCharsets.UTF_8)
+        val total = plates.sumOf { it.second.size }
+        val out = ByteArray(9 + header.size + total)
+        SYNC_MAGIC.copyInto(out, 0)
+        out[4] = 1
+        val n = header.size
+        out[5] = (n ushr 24).toByte()
+        out[6] = (n ushr 16).toByte()
+        out[7] = (n ushr 8).toByte()
+        out[8] = n.toByte()
+        header.copyInto(out, 9)
+        var cursor = 9 + header.size
+        for (plate in plates) {
+            plate.second.copyInto(out, cursor)
+            cursor += plate.second.size
+        }
+        return out
+    }
+
+    private fun parseSyncPack(data: ByteArray): Pair<JSONArray, List<Pair<String, ByteArray>>>? {
+        if (data.size < 9 || !data.copyOfRange(0, 4).contentEquals(SYNC_MAGIC) || data[4].toInt() != 1) return null
+        val n = ((data[5].toInt() and 0xFF) shl 24) or
+            ((data[6].toInt() and 0xFF) shl 16) or
+            ((data[7].toInt() and 0xFF) shl 8) or
+            (data[8].toInt() and 0xFF)
+        if (n < 2 || 9 + n > data.size) return null
+        return try {
+            val header = JSONObject(String(data.copyOfRange(9, 9 + n), StandardCharsets.UTF_8))
+            val blocks = header.optJSONArray("blocks") ?: return null
+            val files = header.optJSONArray("files") ?: return null
+            var cursor = 9 + n
+            val plates = mutableListOf<Pair<String, ByteArray>>()
+            for (index in 0 until files.length()) {
+                val item = files.getJSONObject(index)
+                val name = item.optString("name").substringAfterLast('/').substringAfterLast('\\')
+                val size = item.optInt("size", -1)
+                if (name.isBlank() || size < 0 || cursor + size > data.size) return null
+                plates += name to data.copyOfRange(cursor, cursor + size)
+                cursor += size
+            }
+            blocks to plates
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun vaultPayload(): JSONObject {
@@ -589,6 +760,21 @@ class CatalogStore(private val context: Context) {
         dir.findFile(name)?.delete()
         val created = dir.createFile("application/octet-stream", name) ?: return
         context.contentResolver.openOutputStream(created.uri)?.use { it.write(bytes) }
+    }
+
+    private fun writeLocalChain(key: String) {
+        val tree = treeForMediaKey(key) ?: return
+        val root = DocumentFile.fromTreeUri(context, tree) ?: return
+        val dir = root.findFile("blockchain")?.takeIf { it.isDirectory } ?: root.createDirectory("blockchain") ?: return
+        dir.findFile("chain.json")?.delete()
+        val created = dir.createFile("application/json", "chain.json") ?: return
+        val text = JSONObject()
+            .put("v", 1)
+            .put("kind", "aperture-sync")
+            .put("difficulty", CHAIN_DIFFICULTY)
+            .put("blocks", chainArray())
+            .toString()
+        context.contentResolver.openOutputStream(created.uri)?.use { it.write(text.toByteArray(StandardCharsets.UTF_8)) }
     }
 
     private fun treeForMediaKey(key: String): Uri? {
@@ -963,6 +1149,7 @@ class CatalogStore(private val context: Context) {
         private const val CHAIN_DIFFICULTY = 1
         private const val GENESIS_PREV = "0000000000000000000000000000000000000000000000000000000000000000"
         private val VAULT_MAGIC = byteArrayOf(0x41, 0x50, 0x43, 0x48)
+        private val SYNC_MAGIC = byteArrayOf(0x41, 0x50, 0x53, 0x59)
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

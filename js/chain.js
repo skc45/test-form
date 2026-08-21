@@ -155,3 +155,85 @@ export async function unlockBytes(data, blocks) {
   if ((await sha256HexBytes(plain)) !== String(parsed.header.imageHash || "")) return null;
   return { header: parsed.header, bytes: plain };
 }
+
+export const SYNC_EXT = ".apsync";
+const SYNC_MAGIC = [0x41, 0x50, 0x53, 0x59];
+
+export function isSyncName(name) {
+  return /\.apsync$/i.test(String(name || ""));
+}
+
+export function isSyncPack(data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return bytes.length >= 9 && SYNC_MAGIC.every((value, index) => bytes[index] === value) && bytes[4] === 1;
+}
+
+export function buildSyncPack(blocks, plates = []) {
+  const files = plates.map((item) => ({ name: item.name, size: item.bytes.length }));
+  const headerBytes = new TextEncoder().encode(
+    JSON.stringify({
+      v: 1,
+      kind: "aperture-sync",
+      difficulty: DIFFICULTY,
+      height: Number(blocks[blocks.length - 1]?.height || 0),
+      blocks,
+      files,
+    }),
+  );
+  const total = plates.reduce((sum, item) => sum + item.bytes.length, 0);
+  const out = new Uint8Array(9 + headerBytes.length + total);
+  out.set(SYNC_MAGIC, 0);
+  out[4] = 1;
+  new DataView(out.buffer).setUint32(5, headerBytes.length);
+  out.set(headerBytes, 9);
+  let cursor = 9 + headerBytes.length;
+  for (const item of plates) {
+    out.set(item.bytes, cursor);
+    cursor += item.bytes.length;
+  }
+  return out;
+}
+
+export async function mergeChains(local, remote, preferRemote = false) {
+  if (Array.isArray(remote) && remote.length && (await verifyChain(remote))) {
+    if (!Array.isArray(local) || !local.length || !(await verifyChain(local))) return remote;
+    if (local[0]?.hash === remote[0]?.hash) {
+      const shared = Math.min(local.length, remote.length);
+      let samePrefix = true;
+      for (let index = 0; index < shared; index += 1) {
+        if (local[index]?.hash !== remote[index]?.hash) {
+          samePrefix = false;
+          break;
+        }
+      }
+      if (samePrefix) return remote.length >= local.length ? remote : local;
+    }
+    if (preferRemote) return remote;
+  }
+  return local;
+}
+
+export function parseSyncPack(data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (!isSyncPack(bytes)) return null;
+  const n = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(5);
+  if (n < 2 || 9 + n > bytes.length) return null;
+  try {
+    const header = JSON.parse(new TextDecoder().decode(bytes.subarray(9, 9 + n)));
+    const blocks = Array.isArray(header?.blocks) ? header.blocks : null;
+    const files = Array.isArray(header?.files) ? header.files : null;
+    if (!blocks || !files) return null;
+    let cursor = 9 + n;
+    const plates = [];
+    for (const item of files) {
+      const name = String(item?.name || "").split(/[\\/]/).pop();
+      const size = Number(item?.size ?? -1);
+      if (!name || size < 0 || cursor + size > bytes.length) return null;
+      plates.push({ name, bytes: bytes.subarray(cursor, cursor + size) });
+      cursor += size;
+    }
+    return { blocks, plates, header };
+  } catch {
+    return null;
+  }
+}

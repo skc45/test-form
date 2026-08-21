@@ -98,6 +98,9 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="chainLedger"', body)
         self.assertIn(b"Unlock folder", body)
         self.assertIn(b"Blockchain monitor", body)
+        self.assertIn(b"Send sync", body)
+        self.assertIn(b"Receive sync", body)
+        self.assertIn(b'id="syncInput"', body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -473,6 +476,92 @@ class ChainTests(unittest.TestCase):
         second = app.encode_folders([photos])
         self.assertEqual(second["encoded"], 0)
         self.assertGreaterEqual(second["skipped"], 1)
+        self.assertTrue((photos / "blockchain" / "chain.json").is_file())
+
+    def test_sync_pack_unlocks_on_another_device(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        encoded = app.encode_folders([photos])
+        self.assertEqual(encoded["encoded"], 1)
+        pack = app.build_sync_pack()
+        self.assertTrue(pack.startswith(app.SYNC_MAGIC))
+        parsed = app.parse_sync_pack(pack)
+        self.assertIsNotNone(parsed)
+        sender = app.load_chain()
+        other = Path(self.tmp.name) / "other-cache"
+        os.environ["APERTURE_CACHE_DIR"] = str(other)
+        received = app.receive_sync_pack(pack)
+        self.assertTrue(received["ok"])
+        self.assertTrue(received["valid"])
+        self.assertEqual(received["received"], 1)
+        self.assertTrue(received["files"][0]["unlocked"])
+        dest = app.load_vault_folder() / received["files"][0]["name"]
+        unlocked = app.unlock_bytes(dest.read_bytes())
+        self.assertIsNotNone(unlocked)
+        self.assertEqual(unlocked[1], TINY_PNG)
+        self.assertEqual([block["hash"] for block in app.load_chain()], [block["hash"] for block in sender])
+
+    def test_copied_blockchain_folder_imports_chain(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        app.encode_folders([photos])
+        sidecar = photos / "blockchain"
+        other = Path(self.tmp.name) / "other-cache"
+        os.environ["APERTURE_CACHE_DIR"] = str(other)
+        listing = app.receive_sync_folder(sidecar)
+        self.assertTrue(listing["ok"])
+        self.assertTrue(listing["valid"])
+        self.assertTrue(any(item["unlocked"] for item in listing["files"]))
+        longer = app.load_chain()
+        shorter = longer[:1]
+        merged = app.merge_chains(shorter, longer)
+        self.assertEqual(len(merged), len(longer))
+        self.assertEqual(app.merge_chains(longer, shorter), longer)
+
+    def test_sync_http_roundtrip(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        app.encode_folders([photos])
+        server = app.run_server(photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/sync")
+            response = conn.getresponse()
+            pack = response.read()
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(pack.startswith(b"APSY"))
+
+            other = Path(self.tmp.name) / "http-other"
+            os.environ["APERTURE_CACHE_DIR"] = str(other)
+            receiver = app.run_server(photos, 0)
+            rhost, rport = receiver.server_address
+            try:
+                conn = HTTPConnection(rhost, rport, timeout=5)
+                conn.request(
+                    "POST",
+                    "/api/sync/receive",
+                    pack,
+                    {"Content-Type": "application/octet-stream"},
+                )
+                posted = conn.getresponse()
+                data = json.loads(posted.read())
+                conn.close()
+                self.assertEqual(posted.status, 200)
+                self.assertTrue(data["ok"])
+                self.assertTrue(data["valid"])
+                self.assertGreaterEqual(data["received"], 1)
+                self.assertTrue(data["files"][0]["unlocked"])
+            finally:
+                receiver.shutdown()
+                receiver.server_close()
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

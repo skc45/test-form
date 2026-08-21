@@ -78,8 +78,11 @@ const els = {
   chainVaultStatus: document.getElementById("chainVaultStatus"),
   chainBtn: document.getElementById("chainBtn"),
   chainUnlock: document.getElementById("chainUnlock"),
+  chainSend: document.getElementById("chainSend"),
+  chainReceive: document.getElementById("chainReceive"),
   vaultInput: document.getElementById("vaultInput"),
   vaultFolderInput: document.getElementById("vaultFolderInput"),
+  syncInput: document.getElementById("syncInput"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -1726,6 +1729,94 @@ function closeChainLedger() {
   window.clearInterval(chainMonitorTimer);
 }
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2500);
+}
+
+async function sendBlockchainSync() {
+  if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Preparing sync pack…";
+  if (window.ApertureAndroid?.shareSync) {
+    window.ApertureAndroid.shareSync();
+    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Send the pack to another device, then tap Receive sync there.";
+    return;
+  }
+  try {
+    const response = await fetch("/api/sync");
+    if (response.ok) {
+      downloadBlob(await response.blob(), "Aperture-sync.apsync");
+      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Sync pack ready — open Receive sync on the other device.";
+      return;
+    }
+  } catch {
+    /* build locally */
+  }
+  const blocks = await loadChainBlocks();
+  const pack = chain.buildSyncPack(
+    blocks,
+    localVault.map((item) => ({ name: item.name, bytes: item.bytes })),
+  );
+  downloadBlob(new Blob([pack], { type: "application/octet-stream" }), "Aperture-sync.apsync");
+  if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Sync pack ready — open Receive sync on the other device.";
+}
+
+function receiveBlockchainSync() {
+  if (window.ApertureAndroid?.receiveSync) {
+    window.ApertureAndroid.receiveSync();
+    return;
+  }
+  els.syncInput?.click();
+}
+
+async function importSyncPack(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const parsed = chain.parseSyncPack(bytes);
+  if (!parsed) throw new Error("undecodable");
+  if (!(await chain.verifyChain(parsed.blocks))) throw new Error("invalid chain");
+  try {
+    const response = await fetch("/api/sync/receive", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", Accept: "application/json" },
+      body: bytes,
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data.blocks)) cacheChainBlocks(data.blocks);
+      return data;
+    }
+  } catch {
+    /* import in the browser */
+  }
+  const merged = await chain.mergeChains(await loadChainBlocks(), parsed.blocks, true);
+  cacheChainBlocks(merged);
+  for (const plate of parsed.plates) rememberLocalVault(plate.name, new Uint8Array(plate.bytes));
+  const listing = await listingFromPacked(
+    parsed.plates.map((plate) => ({ name: plate.name, bytes: new Uint8Array(plate.bytes) })),
+    merged,
+  );
+  listing.blocks = merged;
+  listing.valid = true;
+  listing.folder = "sync";
+  listing.received = parsed.plates.length;
+  return listing;
+}
+
+async function applyReceivedSync(listing) {
+  await renderChainMonitor(listing);
+  if (openUnlockedCatalog(listing)) closeChainLedger();
+  else if (els.chainVaultStatus) {
+    els.chainVaultStatus.textContent = listing?.valid
+      ? "Received chain — unlock to decode plates."
+      : "Received pack failed verification.";
+  }
+}
+
 async function unlockBlockchainFolder() {
   if (els.chainUnlock) els.chainUnlock.disabled = true;
   if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Unlocking…";
@@ -1967,6 +2058,17 @@ async function sendPost(event) {
 
 async function ingestDataTransfer(transfer) {
   const dropped = [...(transfer.files || [])];
+  const syncFile = dropped.find((file) => chain.isSyncName(file.name) || file.name.toLowerCase().endsWith(".apsync"));
+  if (syncFile) {
+    try {
+      const listing = await importSyncPack(await syncFile.arrayBuffer());
+      await applyReceivedSync(listing);
+    } catch {
+      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+      else openChainLedger();
+    }
+    return;
+  }
   if (dropped.length && dropped.every((file) => chain.isApcName(file.name))) {
     const listing = await unlockPackedFiles(dropped, guessFolderName(dropped) || "blockchain");
     await renderChainMonitor(listing);
@@ -2070,6 +2172,19 @@ async function wire() {
   els.chainBtn?.addEventListener("click", openChainLedger);
   document.getElementById("chainClose")?.addEventListener("click", closeChainLedger);
   els.chainUnlock?.addEventListener("click", unlockBlockchainFolder);
+  els.chainSend?.addEventListener("click", sendBlockchainSync);
+  els.chainReceive?.addEventListener("click", receiveBlockchainSync);
+  els.syncInput?.addEventListener("change", async () => {
+    const file = els.syncInput.files?.[0];
+    els.syncInput.value = "";
+    if (!file) return;
+    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Receiving chain…";
+    try {
+      await applyReceivedSync(await importSyncPack(await file.arrayBuffer()));
+    } catch {
+      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+    }
+  });
   els.chainFiles?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-vault]");
     if (!row || row.classList.contains("is-locked")) return;
@@ -2190,6 +2305,10 @@ async function wire() {
       paintCacheCard(await loadMergedSession());
       showOpener();
     }
+  });
+  window.addEventListener("aperture-native-sync-error", () => {
+    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+    else void openChainLedger();
   });
   window.addEventListener("aperture-native-vault", async () => {
     const listing = await fetchVault();
