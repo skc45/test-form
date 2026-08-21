@@ -104,7 +104,8 @@ class MainActivity : AppCompatActivity() {
                         }
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
-                            store.recentCoverResponse(index)
+                            val plate = url.getQueryParameter("p")?.toIntOrNull() ?: 0
+                            store.recentCoverResponse(index, plate)
                         }
                         path.startsWith("/media/") -> {
                             val rel = Uri.decode(path.removePrefix("/media/"))

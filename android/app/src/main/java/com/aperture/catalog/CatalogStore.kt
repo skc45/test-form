@@ -123,21 +123,23 @@ class CatalogStore(private val context: Context) {
         return json(body)
     }
 
-    fun recentCoverResponse(index: Int): WebResourceResponse {
+    fun recentCoverResponse(index: Int, plate: Int = 0): WebResourceResponse {
         val recents = recentsArray()
         if (index < 0 || index >= recents.length()) return notFound()
         val raw = recents.getJSONObject(index).optString("path").ifBlank {
             recents.getJSONObject(index).optString("id")
         }
         if (raw.isBlank()) return notFound()
+        val safePlate = plate.coerceAtLeast(0)
         val current = prefs.getString(KEY_URI, "").orEmpty()
-        if (raw == current && photos.isNotEmpty()) {
-            return mediaResponse(photos[0].optString("id"))
+        if (raw == current && photos.isNotEmpty() && currentTrees.size <= 1) {
+            val photo = photos.getOrNull(safePlate.coerceAtMost(photos.lastIndex)) ?: return notFound()
+            return mediaResponse(photo.optString("id"))
         }
         val uri = Uri.parse(raw)
         if (!hasPermission(uri)) return notFound()
         val root = DocumentFile.fromTreeUri(context, uri) ?: return notFound()
-        val cover = firstImage(root) ?: return notFound()
+        val cover = nthImage(root, safePlate) ?: return notFound()
         val stream = context.contentResolver.openInputStream(cover.uri) ?: return notFound()
         return WebResourceResponse(
             mimeFor(cover.name ?: "cover.jpg"),
@@ -252,7 +254,14 @@ class CatalogStore(private val context: Context) {
         val limit = minOf(recents.length(), MAX_RECENTS)
         for (index in 0 until limit) {
             val item = recents.getJSONObject(index)
-            item.put("cover", "/api/recent-cover?i=$index")
+            item.put("cover", "/api/recent-cover?i=$index&p=0")
+            val rawCount = item.optInt("photoCount", 0)
+            val count = (if (rawCount > 0) rawCount else MAX_RECENT_SLIDES).coerceIn(1, MAX_RECENT_SLIDES)
+            val covers = JSONArray()
+            for (plate in 0 until count) {
+                covers.put("/api/recent-cover?i=$index&p=$plate")
+            }
+            item.put("covers", covers)
             out.put(item)
         }
         return out
@@ -293,17 +302,28 @@ class CatalogStore(private val context: Context) {
         return uris.toList()
     }
 
-    private fun firstImage(dir: DocumentFile): DocumentFile? {
+    private fun collectImages(dir: DocumentFile, out: MutableList<DocumentFile>, limit: Int) {
+        if (out.size >= limit) return
         val children = dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }
         for (child in children) {
+            if (out.size >= limit) return
             val name = child.name ?: continue
             if (child.isDirectory) {
-                firstImage(child)?.let { return it }
+                collectImages(child, out, limit)
                 continue
             }
-            if (isImage(name)) return child
+            if (isImage(name)) out += child
         }
-        return null
+    }
+
+    private fun nthImage(dir: DocumentFile, plate: Int): DocumentFile? {
+        val found = mutableListOf<DocumentFile>()
+        collectImages(dir, found, plate + 1)
+        return found.getOrNull(plate)
+    }
+
+    private fun firstImage(dir: DocumentFile): DocumentFile? {
+        return nthImage(dir, 0)
     }
 
     private fun hasPermission(uri: Uri): Boolean {
@@ -498,6 +518,7 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val MAX_RECENTS = 3
+        private const val MAX_RECENT_SLIDES = 8
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

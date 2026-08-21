@@ -230,6 +230,38 @@ class CacheTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_recent_cover_slides(self):
+        (self.photos / "next.png").write_bytes(TINY_PNG)
+        app.remember_folder(self.photos, 2)
+        server = app.run_server(self.photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/cache")
+            payload = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertEqual(len(payload["recents"][0]["covers"]), 2)
+            self.assertEqual(payload["recents"][0]["covers"][1], "/api/recent-cover?i=0&p=1")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/recent-cover?i=0&p=0")
+            first = conn.getresponse()
+            first_body = first.read()
+            conn.close()
+            self.assertEqual(first.status, 200)
+            self.assertEqual(first_body[:8], b"\x89PNG\r\n\x1a\n")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/recent-cover?i=0&p=1")
+            second = conn.getresponse()
+            second_body = second.read()
+            conn.close()
+            self.assertEqual(second.status, 200)
+            self.assertEqual(second_body[:8], b"\x89PNG\r\n\x1a\n")
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_open_multiple_folders(self):
         other = Path(self.tmp.name) / "other"
         other.mkdir()
@@ -288,6 +320,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(payload["lastFolderName"], self.photos.name)
             self.assertEqual(payload["recents"][0]["path"], str(self.photos))
             self.assertTrue(payload["recents"][0]["cover"].startswith("/api/recent-cover"))
+            self.assertTrue(payload["recents"][0]["covers"][0].startswith("/api/recent-cover"))
 
             conn = HTTPConnection(host, port, timeout=5)
             conn.request("DELETE", "/api/cache")

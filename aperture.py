@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 CACHE_ENV = "APERTURE_CACHE_DIR"
 MAX_RECENTS = 3
+MAX_RECENT_SLIDES = 8
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -135,6 +136,11 @@ def as_recent(item, photo_count: int | None = None) -> dict | None:
         "photoCount": count,
         "openedAt": str(item.get("openedAt") or ""),
         "cover": str(item.get("cover") or ""),
+        "covers": [
+            str(src)
+            for src in (item.get("covers") if isinstance(item.get("covers"), list) else [])
+            if str(src).strip()
+        ][:MAX_RECENT_SLIDES],
     }
 
 
@@ -162,16 +168,35 @@ def upsert_recent(recents, entry: dict) -> list[dict]:
 
 
 def decorate_recents(recents: list[dict]) -> list[dict]:
-    return [{**item, "cover": f"/api/recent-cover?i={index}"} for index, item in enumerate(recents)]
+    out: list[dict] = []
+    for index, item in enumerate(recents):
+        try:
+            count = int(item.get("photoCount") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        n = min(MAX_RECENT_SLIDES, count if count > 0 else MAX_RECENT_SLIDES)
+        n = max(n, 1)
+        covers = [f"/api/recent-cover?i={index}&p={plate}" for plate in range(n)]
+        out.append({**item, "cover": covers[0], "covers": covers})
+    return out
+
+
+def images_in(folder: Path, limit: int = MAX_RECENT_SLIDES) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    found: list[Path] = []
+    for path in sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if not is_image(path):
+            continue
+        found.append(path)
+        if len(found) >= limit:
+            break
+    return found
 
 
 def first_image_in(folder: Path) -> Path | None:
-    if not folder.is_dir():
-        return None
-    for path in sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if is_image(path):
-            return path
-    return None
+    found = images_in(folder, 1)
+    return found[0] if found else None
 
 
 def load_disk_session() -> dict:
@@ -507,21 +532,23 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def _send_recent_cover(self, query: str) -> None:
+        qs = parse_qs(query)
         try:
-            index = int((parse_qs(query).get("i") or ["0"])[0])
+            index = int((qs.get("i") or ["0"])[0])
+            plate = int((qs.get("p") or ["0"])[0])
         except ValueError:
             self.send_error(404, "Not found")
             return
         recents = load_disk_session().get("recents") or []
-        if index < 0 or index >= len(recents):
+        if index < 0 or index >= len(recents) or plate < 0:
             self.send_error(404, "Not found")
             return
         folder = Path(recents[index]["path"]).expanduser()
-        cover = first_image_in(folder)
-        if not cover:
+        covers = images_in(folder, plate + 1)
+        if plate >= len(covers):
             self.send_error(404, "Not found")
             return
-        self._send_image_file(cover)
+        self._send_image_file(covers[plate])
 
     def _send_media(self, rel: str) -> None:
         folders = self.runtime.folders

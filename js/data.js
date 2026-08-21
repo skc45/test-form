@@ -33,6 +33,7 @@ function idbOp(mode, fn) {
 }
 
 export const MAX_RECENTS = 3;
+export const MAX_RECENT_SLIDES = 8;
 
 export function emptySession() {
   return {
@@ -65,6 +66,7 @@ export function normalizeRecents(raw) {
             path: item.path || item.lastFolder || "",
             photoCount: item.photoCount || 0,
             cover: item.cover || "",
+            covers: Array.isArray(item.covers) ? item.covers.map(String).filter(Boolean).slice(0, MAX_RECENT_SLIDES) : [],
             openedAt: item.openedAt || item.updatedAt || "",
           };
     if (!entry.id || seen.has(entry.id)) continue;
@@ -82,6 +84,7 @@ export function upsertRecent(recents, entry) {
     path: entry.path || "",
     photoCount: entry.photoCount || 0,
     cover: entry.cover || "",
+    covers: Array.isArray(entry.covers) ? entry.covers.filter(Boolean).slice(0, MAX_RECENT_SLIDES) : [],
     openedAt: entry.openedAt || new Date().toISOString(),
   };
   if (!next.id) return normalizeRecents(recents);
@@ -99,6 +102,7 @@ export function recentsFromSession(session) {
       name: name || "Folder",
       photoCount: session.photoCount || 0,
       cover: session.cover || "",
+      covers: Array.isArray(session.covers) ? session.covers : [],
       openedAt: session.openedAt || session.updatedAt || "",
     });
   }
