@@ -63,6 +63,8 @@ const els = {
   recentTabs: document.getElementById("recentTabs"),
   topbar: document.getElementById("topbar"),
   catalogHint: document.getElementById("catalogHint"),
+  sendBar: document.getElementById("sendBar"),
+  sendCopy: document.getElementById("sendCopy"),
   downloadBar: document.getElementById("downloadBar"),
   downloadCopy: document.getElementById("downloadCopy"),
   downloadFill: document.getElementById("downloadFill"),
@@ -100,6 +102,7 @@ let chromeTimer = 0;
 let downloadTimer = 0;
 let recentSlideTimer = 0;
 let downloadBusy = false;
+let sendBusy = false;
 let postBusy = false;
 let chainMonitorTimer = 0;
 let encodeTimer = 0;
@@ -555,6 +558,7 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
   renderCatalog();
   renderRecentSelection();
   persistCatalog();
+  paintSendBar();
   if (source === "folder") queueAutoEncode();
 }
 
@@ -566,7 +570,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `Cached folder · ${escapeHtml(state.folderName)} · <kbd>O</kbd> change · <kbd>?</kbd> shortcuts`;
+      hint.innerHTML = `Ready to send · ${escapeHtml(state.folderName)} · tap Send this folder`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -609,12 +613,12 @@ async function persistCatalogAsync() {
   }
   if (state.source === "blockchain") {
     if (hint) {
-      hint.innerHTML = `Unlocked vault · ${escapeHtml(state.folderName || "blockchain")} · <kbd>B</kbd> monitor`;
+      hint.innerHTML = `Unlocked vault · ${escapeHtml(state.folderName || "blockchain")} · tap Send this folder`;
     }
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · click a plate · long-press to send · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts";
+    hint.innerHTML = "Open a folder · tap Send this folder · <kbd>S</kbd> send · <kbd>R</kbd> receive";
   }
 }
 
@@ -1069,6 +1073,11 @@ function onKey(event) {
     if (event.key === "Escape") {
       event.preventDefault();
       closeChainLedger();
+      return;
+    }
+    if (event.key === "s" || event.key === "S") {
+      event.preventDefault();
+      void sendFolder();
     }
     return;
   }
@@ -1077,6 +1086,18 @@ function onKey(event) {
     event.preventDefault();
     if (els.skinEditor?.hidden === false) closeSkinEditor();
     else openSkinEditor();
+    return;
+  }
+  if (event.key === "s" || event.key === "S") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    void sendFolder();
+    return;
+  }
+  if (event.key === "r" || event.key === "R") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    receiveBlockchainSync();
     return;
   }
   if (event.key === "b" || event.key === "B") {
@@ -1475,7 +1496,8 @@ function queueAutoEncode() {
 
 function setEncodeHint(label) {
   if (!els.catalogHint || state.source !== "folder") return;
-  els.catalogHint.innerHTML = `${label} · ${escapeHtml(state.folderName)} · <kbd>B</kbd> monitor`;
+  els.catalogHint.innerHTML = `${label} · ${escapeHtml(state.folderName)} · tap Send this folder`;
+  paintSendBar();
 }
 
 async function writeFolderApc(name, packed) {
@@ -1532,13 +1554,7 @@ function applyEncodeResult(data) {
   const skipped = Number(data?.skipped || 0);
   const total = encoded + skipped;
   if (Array.isArray(data?.blocks) && data.blocks.length) cacheChainBlocks(data.blocks);
-  setEncodeHint(
-    encoded
-      ? `Encoded ${encoded} plate${encoded === 1 ? "" : "s"}`
-      : total
-        ? "Folder already on chain"
-        : "No plates to encode",
-  );
+  setEncodeHint(encoded ? `Ready to send · ${encoded} new plate${encoded === 1 ? "" : "s"}` : total ? "Ready to send" : "No plates to send");
   if (!els.chainLedger?.hidden) void renderChainMonitor(data);
 }
 
@@ -1713,24 +1729,17 @@ async function renderChainMonitor(listing) {
   const data = listing || (await fetchVault());
   const blocks = Array.isArray(data.blocks) && data.blocks.length ? data.blocks : await loadChainBlocks();
   const valid = data.valid !== false && (await chain.verifyChain(blocks));
-  const tip = blocks[blocks.length - 1];
   if (els.chainStatus) {
+    const plates = (data.files || []).length || state.photos.length;
     els.chainStatus.textContent = valid
-      ? `Live · height ${Number(tip?.height || 0)} · ${blocks.length} block${blocks.length === 1 ? "" : "s"} · difficulty ${chain.DIFFICULTY}`
-      : "Chain failed verification — plates stay locked";
+      ? `${plates} plate${plates === 1 ? "" : "s"} ready to send`
+      : "Could not verify this folder";
   }
   const files = data.files || [];
-  const unlocked = files.filter((item) => item.unlocked).length;
   if (els.chainVaultStatus) {
-    if (!files.length) {
-      els.chainVaultStatus.textContent = data.path
-        ? `Vault · ${data.folder || "blockchain"} · empty`
-        : "Unlock a blockchain folder to decode sealed plates.";
-    } else {
-      els.chainVaultStatus.textContent = `${unlocked} of ${files.length} plate${files.length === 1 ? "" : "s"} decoded${
-        data.folder ? ` · ${data.folder}` : ""
-      }`;
-    }
+    els.chainVaultStatus.textContent = sendBusy
+      ? "Sealing folder…"
+      : "The other device opens Aperture and taps Receive folder.";
   }
   els.chainList.innerHTML = blocks
     .slice()
@@ -1744,8 +1753,9 @@ async function renderChainMonitor(listing) {
       </li>`
     )
     .join("");
+  if (els.chainList) els.chainList.hidden = true;
   if (els.chainFiles) {
-    els.chainFiles.hidden = files.length === 0;
+    els.chainFiles.hidden = true;
     els.chainFiles.innerHTML = files
       .map(
         (item) => `
@@ -1794,18 +1804,56 @@ function downloadBlob(blob, filename) {
   window.setTimeout(() => URL.revokeObjectURL(url), 2500);
 }
 
+function syncFilename() {
+  return `Aperture-${slug(state.folderName || "folder")}.apsync`;
+}
+
+function paintSendBar(label) {
+  const ready = (state.source === "folder" || state.source === "blockchain") && state.photos.length > 0;
+  if (!els.sendBar) return;
+  els.sendBar.hidden = !ready;
+  els.sendBar.classList.toggle("is-busy", sendBusy);
+  if (els.sendCopy) els.sendCopy.textContent = label || (sendBusy ? "Sealing folder…" : "Send this folder");
+}
+
+function setSendStatus(label) {
+  paintSendBar(label);
+  if (els.chainVaultStatus) els.chainVaultStatus.textContent = label;
+}
+
+async function sendFolder() {
+  if (sendBusy) return;
+  if (state.source === "demo" || !state.photos.length) {
+    showOpener();
+    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Open a folder first, then send it.";
+    return;
+  }
+  sendBusy = true;
+  setSendStatus("Sealing folder…");
+  try {
+    if (state.source === "folder") await autoEncodeFolder();
+    await sendBlockchainSync();
+  } catch {
+    setSendStatus("Could not send that folder.");
+  } finally {
+    sendBusy = false;
+    paintSendBar();
+  }
+}
+
 async function sendBlockchainSync() {
-  if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Preparing sync pack…";
+  setSendStatus("Preparing folder…");
+  const filename = syncFilename();
   if (window.ApertureAndroid?.shareSync) {
     window.ApertureAndroid.shareSync();
-    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Send the pack to another device, then tap Receive sync there.";
+    setSendStatus("Pick where to send it. On the other phone, tap Receive folder.");
     return;
   }
   try {
     const response = await fetch("/api/sync");
     if (response.ok) {
-      downloadBlob(await response.blob(), "Aperture-sync.apsync");
-      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Sync pack ready — open Receive sync on the other device.";
+      downloadBlob(await response.blob(), filename);
+      setSendStatus("Folder file saved — open Aperture on the other device and tap Receive folder.");
       return;
     }
   } catch {
@@ -1816,8 +1864,8 @@ async function sendBlockchainSync() {
     blocks,
     localVault.map((item) => ({ name: item.name, bytes: item.bytes })),
   );
-  downloadBlob(new Blob([pack], { type: "application/octet-stream" }), "Aperture-sync.apsync");
-  if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Sync pack ready — open Receive sync on the other device.";
+  downloadBlob(new Blob([pack], { type: "application/octet-stream" }), filename);
+  setSendStatus("Folder file saved — open Aperture on the other device and tap Receive folder.");
 }
 
 function receiveBlockchainSync() {
@@ -2118,7 +2166,7 @@ async function ingestDataTransfer(transfer) {
       const listing = await importSyncPack(await syncFile.arrayBuffer());
       await applyReceivedSync(listing);
     } catch {
-      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not open that folder.";
       else openChainLedger();
     }
     return;
@@ -2159,6 +2207,7 @@ async function wire() {
   }
   paintCacheCard(await loadMergedSession());
   await theme.restoreSkin();
+  paintSendBar();
   if (appMode && !fromApi && !fromCache) showOpener();
   else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
@@ -2184,6 +2233,7 @@ async function wire() {
 
   els.folderBtn.addEventListener("click", openFolderOrRecents);
   document.getElementById("openerFolderBtn").addEventListener("click", openFolderPicker);
+  document.getElementById("openerReceiveBtn")?.addEventListener("click", receiveBlockchainSync);
   document.getElementById("forgetBtn").addEventListener("click", forgetFolder);
   els.recentRow?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-recent]");
@@ -2224,7 +2274,9 @@ async function wire() {
   els.postForm?.addEventListener("click", (event) => {
     if (event.target === els.postForm) closePostForm();
   });
-  els.chainBtn?.addEventListener("click", openChainLedger);
+  els.chainBtn?.addEventListener("click", () => void sendFolder());
+  attachLongPress(els.chainBtn, openChainLedger);
+  els.sendBar?.addEventListener("click", () => void sendFolder());
   els.themeBtn?.addEventListener("click", openSkinEditor);
   document.getElementById("skinClose")?.addEventListener("click", closeSkinEditor);
   document.getElementById("skinReset")?.addEventListener("click", () => {
@@ -2248,7 +2300,7 @@ async function wire() {
   });
   document.getElementById("chainClose")?.addEventListener("click", closeChainLedger);
   els.chainUnlock?.addEventListener("click", unlockBlockchainFolder);
-  els.chainSend?.addEventListener("click", sendBlockchainSync);
+  els.chainSend?.addEventListener("click", () => void sendFolder());
   els.chainReceive?.addEventListener("click", receiveBlockchainSync);
   els.syncInput?.addEventListener("change", async () => {
     const file = els.syncInput.files?.[0];
@@ -2258,7 +2310,7 @@ async function wire() {
     try {
       await applyReceivedSync(await importSyncPack(await file.arrayBuffer()));
     } catch {
-      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+      if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not open that folder.";
     }
   });
   els.chainFiles?.addEventListener("click", (event) => {
@@ -2383,7 +2435,7 @@ async function wire() {
     }
   });
   window.addEventListener("aperture-native-sync-error", () => {
-    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not receive that sync pack.";
+    if (els.chainVaultStatus) els.chainVaultStatus.textContent = "Could not open that folder.";
     else void openChainLedger();
   });
   window.addEventListener("aperture-native-vault", async () => {

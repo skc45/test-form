@@ -516,7 +516,8 @@ class CatalogStore(private val context: Context) {
     fun writeSyncPack(): File {
         persistChainFile()
         val packed = buildSyncPack()
-        val dest = File(context.cacheDir, "share/Aperture-sync.apsync")
+        val stem = slug(prefs.getString(KEY_NAME, "folder").orEmpty().ifBlank { "folder" })
+        val dest = File(context.cacheDir, "share/Aperture-$stem.apsync")
         dest.parentFile?.mkdirs()
         dest.writeBytes(packed)
         return dest
@@ -524,13 +525,14 @@ class CatalogStore(private val context: Context) {
 
     fun syncResponse(): WebResourceResponse {
         val packed = buildSyncPack()
+        val stem = slug(prefs.getString(KEY_NAME, "folder").orEmpty().ifBlank { "folder" })
         return WebResourceResponse(
             "application/octet-stream",
             null,
             200,
             "OK",
             mapOf(
-                "Content-Disposition" to "attachment; filename=\"Aperture-sync.apsync\"",
+                "Content-Disposition" to "attachment; filename=\"Aperture-$stem.apsync\"",
                 "Content-Length" to packed.size.toString(),
                 "Cache-Control" to "no-store",
             ),

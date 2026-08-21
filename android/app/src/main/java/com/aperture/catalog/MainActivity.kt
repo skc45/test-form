@@ -398,11 +398,11 @@ class MainActivity : AppCompatActivity() {
                     type = "application/octet-stream"
                     clipData = android.content.ClipData.newUri(contentResolver, "sync", uri)
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "Aperture chain sync")
-                    putExtra(Intent.EXTRA_TEXT, "Receive this pack in Aperture with Receive sync.")
+                    putExtra(Intent.EXTRA_SUBJECT, "Aperture folder")
+                    putExtra(Intent.EXTRA_TEXT, "Open this file in Aperture and tap Receive folder.")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                startActivity(Intent.createChooser(send, "Send chain"))
+                startActivity(Intent.createChooser(send, "Send folder"))
             }
         }.start()
     }

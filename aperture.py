@@ -953,6 +953,10 @@ def resolve_startup_folder(requested: Path | None) -> Path | None:
     return None
 
 
+def sync_pack_name() -> str:
+    return f"Aperture-{slug(str(load_disk_session().get('lastFolderName') or 'folder'))}{SYNC_EXT}"
+
+
 def slug(value: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (value or "folder"))
     parts = [part for part in cleaned.split("-") if part]
@@ -1255,9 +1259,10 @@ class ApertureHandler(SimpleHTTPRequestHandler):
 
     def _send_sync_pack(self) -> None:
         data = build_sync_pack()
+        filename = sync_pack_name()
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Disposition", 'attachment; filename="Aperture-sync.apsync"')
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

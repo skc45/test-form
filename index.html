@@ -49,7 +49,7 @@
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
               </svg>
             </button>
-            <button class="icon-btn" id="chainBtn" type="button" aria-label="Open blockchain monitor" title="Blockchain monitor">
+            <button class="icon-btn" id="chainBtn" type="button" aria-label="Send folder" title="Send folder">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="3" y="4" width="8" height="8" rx="1.6" />
                 <rect x="13" y="12" width="8" height="8" rx="1.6" />
@@ -93,9 +93,12 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · click a plate · long-press to send · <kbd>O</kbd> folder · <kbd>?</kbd> shortcuts</p>
+            <p class="hint" id="catalogHint">Open a folder · tap Send this folder · <kbd>S</kbd> send · <kbd>R</kbd> receive</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
+          <button class="send-bar" id="sendBar" type="button" hidden>
+            <span class="send-copy" id="sendCopy">Send this folder</span>
+          </button>
           <p class="empty" id="empty" hidden>No plates match that search.</p>
         </section>
       </main>
@@ -164,13 +167,14 @@
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Send as a post</dd></div>
-          <div><dt>B</dt><dd>Blockchain monitor</dd></div>
+          <div><dt>S</dt><dd>Send this folder</dd></div>
+          <div><dt>R</dt><dd>Receive folder</dd></div>
+          <div><dt>B</dt><dd>Send sheet</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
-          <div><dt>Send sync</dt><dd>Share chain with another device</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder, or drop a folder of images onto the catalog.</p>
+        <p class="help-foot">Open a folder and tap Send this folder. On the other device, tap Receive folder.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -180,7 +184,7 @@
         <p class="help-kicker">Aperture</p>
         <h2>Open a folder</h2>
         <p class="opener-copy">
-          Choose a directory of photographs. Subfolders become catalog filters. Tap recent folders to select them together — the catalog merges every highlighted folder.
+          Choose a folder of photographs, or receive one sent from another device. Sending seals the folder on the chain as a single file the other phone can open.
         </p>
         <div class="cache-card" id="cacheCard" hidden>
           <p class="help-kicker">Recent plates</p>
@@ -191,6 +195,7 @@
         </div>
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="openerFolderBtn" type="button">Choose folder</button>
+          <button class="text-btn" id="openerReceiveBtn" type="button">Receive folder</button>
           <button class="text-btn" id="demoBtn" type="button">View demo catalog</button>
         </div>
       </div>
@@ -220,16 +225,16 @@
 
     <div class="chain-ledger" id="chainLedger" hidden>
       <div class="chain-card chain-monitor">
-        <p class="help-kicker">Monitor</p>
-        <h2>Aperture chain</h2>
-        <p class="chain-status" id="chainStatus">Loading blocks…</p>
-        <p class="chain-vault-status" id="chainVaultStatus">Unlock a blockchain folder to decode sealed plates.</p>
-        <ol class="chain-list" id="chainList"></ol>
+        <p class="help-kicker">Folder</p>
+        <h2>Send this folder</h2>
+        <p class="chain-status" id="chainStatus">Sealing plates…</p>
+        <p class="chain-vault-status" id="chainVaultStatus">One file. The other device taps Receive folder.</p>
+        <ol class="chain-list" id="chainList" hidden></ol>
         <ol class="chain-list chain-files" id="chainFiles" hidden></ol>
         <div class="opener-actions">
-          <button class="text-btn opener-primary" id="chainUnlock" type="button">Unlock folder</button>
-          <button class="text-btn" id="chainSend" type="button">Send sync</button>
-          <button class="text-btn" id="chainReceive" type="button">Receive sync</button>
+          <button class="text-btn opener-primary" id="chainSend" type="button">Send folder</button>
+          <button class="text-btn" id="chainReceive" type="button">Receive folder</button>
+          <button class="text-btn" id="chainUnlock" type="button">Unlock folder</button>
           <button class="text-btn" id="chainClose" type="button">Close</button>
         </div>
       </div>
