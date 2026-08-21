@@ -237,6 +237,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun attachPostNft(file: String, json: String): String {
+            return store.attachPostNft(file, json).toString()
+        }
+
+        @JavascriptInterface
         fun loadSkin(): String {
             return store.loadSkin()
         }

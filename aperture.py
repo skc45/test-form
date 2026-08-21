@@ -80,6 +80,26 @@ def posts_dir() -> Path:
     return folder
 
 
+def post_public_fields(meta: dict, filename: str) -> dict:
+    item = {
+        "title": str(meta.get("title") or ""),
+        "caption": str(meta.get("caption") or ""),
+        "file": filename,
+        "type": str(meta.get("type") or ""),
+        "sentAt": str(meta.get("sentAt") or ""),
+        "src": "/media/posts/" + quote(filename),
+        "pointer": str(meta.get("pointer") or ""),
+        "address": str(meta.get("address") or ""),
+        "tokenId": str(meta.get("tokenId") or ""),
+    }
+    if meta.get("shard") is not None and str(meta.get("shard")) != "":
+        try:
+            item["shard"] = int(meta.get("shard"))
+        except (TypeError, ValueError):
+            item["shard"] = str(meta.get("shard"))
+    return item
+
+
 def list_posts() -> dict:
     folder = cache_home() / "posts"
     items: list[dict] = []
@@ -96,17 +116,43 @@ def list_posts() -> dict:
             image = (folder / filename).resolve()
             if not filename or not image.is_file() or not safe_under(folder.resolve(), image):
                 continue
-            items.append(
-                {
-                    "title": str(meta.get("title") or ""),
-                    "caption": str(meta.get("caption") or ""),
-                    "file": filename,
-                    "type": str(meta.get("type") or ""),
-                    "sentAt": str(meta.get("sentAt") or ""),
-                    "src": "/media/posts/" + quote(filename),
-                }
-            )
+            items.append(post_public_fields(meta, filename))
     return {"ok": True, "count": len(items), "posts": items}
+
+
+def attach_post_nft(body: dict) -> dict:
+    filename = Path(str(body.get("file") or "")).name
+    pointer = str(body.get("pointer") or "")
+    address = str(body.get("address") or "")
+    if not filename:
+        return {"ok": False, "error": "missing post"}
+    if not pointer and not address:
+        return {"ok": False, "error": "missing nft"}
+    folder = cache_home() / "posts"
+    if not folder.is_dir():
+        return {"ok": False, "error": "unknown post"}
+    for meta_path in folder.glob("*.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        if Path(str(meta.get("file") or "")).name != filename:
+            continue
+        meta["pointer"] = pointer
+        meta["address"] = address
+        meta["tokenId"] = str(body.get("tokenId") or "")
+        shard = body.get("shard")
+        if shard is not None and str(shard) != "":
+            try:
+                meta["shard"] = int(shard)
+            except (TypeError, ValueError):
+                meta["shard"] = str(shard)
+        meta["nftAttachedAt"] = datetime.now().isoformat(timespec="seconds")
+        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return {"ok": True, "post": post_public_fields(meta, filename)}
+    return {"ok": False, "error": "unknown post"}
 
 
 SKIP_DIR_NAMES = {"blockchain", "xrp"}
@@ -879,6 +925,13 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/post":
             self._save_post()
+            return
+        if parsed.path == "/api/posts/nft":
+            result = attach_post_nft(self._read_json())
+            if not result.get("ok"):
+                self.send_error(400, str(result.get("error") or "Could not attach NFT"))
+                return
+            self._send_json(result)
             return
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **save_skin(self._read_json())})

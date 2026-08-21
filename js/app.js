@@ -85,6 +85,9 @@ const els = {
   canvasBoard: document.getElementById("canvasBoard"),
   canvasStatus: document.getElementById("canvasStatus"),
   canvasWall: document.getElementById("canvasWall"),
+  canvasTrack: document.getElementById("canvasTrack"),
+  canvasFill: document.getElementById("canvasFill"),
+  canvasNftAll: document.getElementById("canvasNftAll"),
   ethShard: document.getElementById("ethShard"),
   ethStatus: document.getElementById("ethStatus"),
   ethCatalogAddress: document.getElementById("ethCatalogAddress"),
@@ -108,6 +111,7 @@ let recentSlideTimer = 0;
 let downloadBusy = false;
 let postBusy = false;
 let ethBusy = false;
+let canvasNftBusy = false;
 let canvasPosts = [];
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
@@ -2072,10 +2076,26 @@ async function saveCanvasPost(photo, title, caption, onProgress) {
 
 function paintCanvasBoard(listing) {
   canvasPosts = listing?.posts || [];
-  if (els.canvasStatus) {
-    els.canvasStatus.textContent = canvasPosts.length
-      ? `${canvasPosts.length} post${canvasPosts.length === 1 ? "" : "s"} on Canvasboard`
-      : "Crop a plate, then post it on the board.";
+  const attached = canvasPosts.filter((post) => post.pointer || post.address).length;
+  if (els.canvasStatus && !canvasNftBusy) {
+    if (!canvasPosts.length) {
+      els.canvasStatus.textContent = "Crop a plate, then post it on the board.";
+    } else if (attached) {
+      els.canvasStatus.textContent = `${canvasPosts.length} post${canvasPosts.length === 1 ? "" : "s"} · ${attached} NFT${attached === 1 ? "" : "s"}`;
+    } else {
+      els.canvasStatus.textContent = `${canvasPosts.length} post${canvasPosts.length === 1 ? "" : "s"} on Canvasboard`;
+    }
+  }
+  if (els.canvasNftAll) {
+    els.canvasNftAll.disabled = canvasNftBusy || !canvasPosts.length;
+    const pending = canvasPosts.filter((post) => !(post.pointer || post.address)).length;
+    els.canvasNftAll.textContent = !canvasPosts.length
+      ? "Attach as NFT"
+      : pending
+        ? attached
+          ? "Attach remaining as NFTs"
+          : "Attach as NFT"
+        : "Open NFTs";
   }
   if (!els.canvasWall) return;
   if (!canvasPosts.length) {
@@ -2086,15 +2106,165 @@ function paintCanvasBoard(listing) {
     .map((post, index) => {
       const caption = post.caption || post.title || "";
       const title = post.title || post.caption || "Post";
+      const pointer = post.pointer || post.address || "";
+      const nftLabel = pointer
+        ? `NFT ${shortAddress(post.tokenId || pointer)}`
+        : "Not attached as NFT";
       return `
       <article class="canvas-plate">
-        <button type="button" data-canvas-index="${index}">
+        <button class="canvas-open" type="button" data-canvas-open="${index}">
           <img src="${escapeHtml(post.src || "")}" alt="${escapeHtml(title)}" />
         </button>
         ${caption ? `<p class="canvas-caption">${escapeHtml(caption)}</p>` : ""}
+        <p class="canvas-nft${pointer ? " is-attached" : ""}">${escapeHtml(nftLabel)}</p>
+        <button class="text-btn canvas-nft-btn" type="button" data-canvas-nft="${index}">${
+          pointer ? "Open NFT" : "Attach as NFT"
+        }</button>
       </article>`;
     })
     .join("");
+}
+
+function photoFromCanvasPost(post, index) {
+  return {
+    id: `canvas/${post.file || index}`,
+    src: post.src,
+    thumb: post.src,
+    hero: post.src,
+    title: post.title || post.caption || "Post",
+    file: post.file,
+    mime: post.type,
+    local: true,
+    category: "canvas",
+  };
+}
+
+function canvasNftPatch(post, result) {
+  return {
+    file: post.file,
+    pointer: result.pointer || "",
+    address: result.address || "",
+    tokenId: result.certificate?.tokenId || result.tokenId || result.nft?.token_id || "",
+    shard: result.shard,
+  };
+}
+
+function applyCanvasNft(post, result) {
+  const patch = canvasNftPatch(post, result);
+  Object.assign(post, patch);
+  rememberLocalCanvasPost(post);
+  return patch;
+}
+
+async function persistCanvasNft(post, result) {
+  const patch = applyCanvasNft(post, result);
+  if (window.ApertureAndroid?.attachPostNft && patch.file) {
+    try {
+      JSON.parse(window.ApertureAndroid.attachPostNft(patch.file, JSON.stringify(patch)) || "{}");
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    await fetch("/api/posts/nft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(patch),
+    });
+  } catch {
+    /* static host */
+  }
+  return patch;
+}
+
+function setCanvasNftProgress(pct, label) {
+  if (els.canvasTrack) els.canvasTrack.hidden = pct <= 0;
+  if (els.canvasFill) els.canvasFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (label && els.canvasStatus) els.canvasStatus.textContent = label;
+  if (els.canvasNftAll) els.canvasNftAll.disabled = canvasNftBusy || !canvasPosts.length;
+  els.canvasWall?.querySelectorAll("[data-canvas-nft]").forEach((btn) => {
+    btn.disabled = canvasNftBusy;
+  });
+}
+
+function canvasNftReady(result) {
+  return result?.ok !== false && (result?.pointer || result?.address || result?.certificate);
+}
+
+async function encodeCanvasPostOnEth(index) {
+  const post = canvasPosts[index];
+  if (!post?.src || canvasNftBusy || ethBusy) return;
+  if (post.pointer || post.address) {
+    if (els.ethPointerInput) els.ethPointerInput.value = post.pointer || post.address;
+    void openEthShard(post.pointer || post.address);
+    return;
+  }
+  canvasNftBusy = true;
+  setCanvasNftProgress(8, `Attaching ${post.title || post.caption || "post"}…`);
+  try {
+    const result = await encodePhotoOnEth(photoFromCanvasPost(post, index), (pct) => {
+      setCanvasNftProgress(Math.max(10, pct), "Reading plate…");
+    });
+    if (!canvasNftReady(result)) {
+      setCanvasNftProgress(0, "Could not attach as NFT");
+      return;
+    }
+    await persistCanvasNft(post, result);
+    if (result.pointer && els.ethPointerInput) els.ethPointerInput.value = result.pointer;
+    paintCanvasBoard({ posts: canvasPosts });
+    setCanvasNftProgress(100, result.pointer ? `NFT ${shortAddress(result.pointer)}` : "Attached as NFT");
+  } catch {
+    setCanvasNftProgress(0, "Could not attach as NFT");
+  } finally {
+    canvasNftBusy = false;
+    if (els.canvasNftAll) els.canvasNftAll.disabled = !canvasPosts.length;
+    window.setTimeout(() => {
+      if (!canvasNftBusy) {
+        if (els.canvasTrack) els.canvasTrack.hidden = true;
+        paintCanvasBoard({ posts: canvasPosts });
+      }
+    }, 900);
+  }
+}
+
+async function encodeCanvasBoardOnEth() {
+  const pending = canvasPosts.filter((post) => post.src && !(post.pointer || post.address));
+  if (canvasNftBusy || ethBusy) return;
+  if (!pending.length) {
+    const first = canvasPosts.find((post) => post.pointer || post.address);
+    if (first?.pointer || first?.address) {
+      const pointer = first.pointer || first.address;
+      if (els.ethPointerInput) els.ethPointerInput.value = pointer;
+      void openEthShard(pointer);
+    }
+    return;
+  }
+  canvasNftBusy = true;
+  setCanvasNftProgress(4, "Attaching Canvasboard as NFTs…");
+  let encoded = 0;
+  try {
+    for (let i = 0; i < pending.length; i += 1) {
+      const post = pending[i];
+      setCanvasNftProgress(Math.round(((i + 1) / pending.length) * 92), `Attaching ${i + 1} of ${pending.length}…`);
+      const result = await encodePhotoOnEth(photoFromCanvasPost(post, canvasPosts.indexOf(post)));
+      if (!canvasNftReady(result)) continue;
+      await persistCanvasNft(post, result);
+      encoded += 1;
+    }
+    paintCanvasBoard({ posts: canvasPosts });
+    setCanvasNftProgress(100, encoded ? `${encoded} NFT${encoded === 1 ? "" : "s"} on Canvasboard` : "Could not attach as NFT");
+  } catch {
+    setCanvasNftProgress(0, "Could not attach as NFT");
+  } finally {
+    canvasNftBusy = false;
+    if (els.canvasNftAll) els.canvasNftAll.disabled = !canvasPosts.length;
+    window.setTimeout(() => {
+      if (!canvasNftBusy) {
+        if (els.canvasTrack) els.canvasTrack.hidden = true;
+        paintCanvasBoard({ posts: canvasPosts });
+      }
+    }, 900);
+  }
 }
 
 async function openCanvasBoard() {
@@ -2279,13 +2449,20 @@ async function wire() {
   els.ethBtn?.addEventListener("click", () => void openEthOverlay());
   els.canvasBar?.addEventListener("click", () => void openCanvasBoard());
   document.getElementById("canvasClose")?.addEventListener("click", closeCanvasBoard);
+  document.getElementById("canvasNftAll")?.addEventListener("click", () => void encodeCanvasBoardOnEth());
   els.canvasBoard?.addEventListener("click", (event) => {
     if (event.target === els.canvasBoard) closeCanvasBoard();
   });
   els.canvasWall?.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-canvas-index]");
-    if (!btn) return;
-    openCanvasPlate(Number(btn.dataset.canvasIndex));
+    const nftBtn = event.target.closest("[data-canvas-nft]");
+    if (nftBtn) {
+      event.preventDefault();
+      void encodeCanvasPostOnEth(Number(nftBtn.dataset.canvasNft));
+      return;
+    }
+    const openBtn = event.target.closest("[data-canvas-open]");
+    if (!openBtn) return;
+    openCanvasPlate(Number(openBtn.dataset.canvasOpen));
   });
   document.getElementById("ethEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnEth());
   document.getElementById("ethEncodePlate")?.addEventListener("click", () => void encodeCurrentOnEth());

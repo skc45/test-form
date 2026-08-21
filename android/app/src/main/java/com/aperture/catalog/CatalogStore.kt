@@ -472,6 +472,46 @@ class CatalogStore(private val context: Context) {
         prefs.edit().putString(KEY_POSTS, next.toString()).apply()
     }
 
+    fun attachPostNft(file: String, payloadJson: String): JSONObject {
+        val filename = File(file).name
+        if (filename.isBlank()) return JSONObject().put("ok", false)
+        val patch = try {
+            JSONObject(payloadJson)
+        } catch (_: Exception) {
+            JSONObject()
+        }
+        val pointer = patch.optString("pointer")
+        val address = patch.optString("address")
+        if (pointer.isBlank() && address.isBlank()) return JSONObject().put("ok", false)
+        val stored = postsArray()
+        val next = JSONArray()
+        var updated: JSONObject? = null
+        for (i in 0 until stored.length()) {
+            val item = stored.optJSONObject(i) ?: continue
+            if (item.optString("file") == filename) {
+                item.put("pointer", pointer)
+                item.put("address", address)
+                item.put("tokenId", patch.optString("tokenId"))
+                if (patch.has("shard") && !patch.isNull("shard")) item.put("shard", patch.opt("shard"))
+                updated = item
+            }
+            next.put(item)
+        }
+        if (updated == null) return JSONObject().put("ok", false)
+        prefs.edit().putString(KEY_POSTS, next.toString()).apply()
+        return JSONObject().put("ok", true).put("post", updated)
+    }
+
+    private fun postFileFromUrl(url: String): File? {
+        val marker = "/media/posts/"
+        val index = url.indexOf(marker)
+        if (index < 0) return null
+        val name = File(url.substring(index + marker.length).substringBefore('?')).name
+        if (name.isBlank()) return null
+        val file = File(postsDir(), name)
+        return if (file.isFile) file else null
+    }
+
     private fun loadSkinObject(): JSONObject {
         return try {
             val raw = prefs.getString(KEY_SKIN, "").orEmpty()
@@ -502,6 +542,13 @@ class CatalogStore(private val context: Context) {
             val name = filename.substringAfterLast('/').ifBlank { "plate.jpg" }
             val mime = mimeFromDataUrl(url).ifBlank { mimeFor(name) }
             return encodeEthPlate(bytes, title.ifBlank { name.substringBeforeLast('.') }, name, mime)
+        }
+        val postFile = postFileFromUrl(url)
+        if (postFile != null) {
+            val bytes = postFile.readBytes()
+            if (bytes.isEmpty() || bytes.size > ETH_MAX_PLATE) return JSONObject().put("ok", false)
+            val name = filename.substringAfterLast('/').ifBlank { postFile.name }
+            return encodeEthPlate(bytes, title.ifBlank { name.substringBeforeLast('.') }, name, mimeFor(postFile.name))
         }
         val dest = File(context.cacheDir, "eth-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
         dest.parentFile?.mkdirs()

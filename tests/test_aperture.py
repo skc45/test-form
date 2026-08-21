@@ -99,6 +99,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="cropForm"', body)
         self.assertIn(b'id="postForm"', body)
         self.assertIn(b'id="canvasBoard"', body)
+        self.assertIn(b'id="canvasNftAll"', body)
         self.assertIn(b"Post on Canvasboard", body)
         self.assertIn(b">Share</button>", body)
         self.assertNotIn(b"New post", body)
@@ -176,6 +177,48 @@ class ServerTests(unittest.TestCase):
 
         status, _, _ = self._get("/media/posts/../../aperture.py")
         self.assertEqual(status, 404)
+        self.assertEqual(board["posts"][0].get("pointer") or "", "")
+
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/posts/nft",
+            json.dumps(
+                {
+                    "file": data["file"],
+                    "pointer": "eths:7/0xabc",
+                    "address": "0xabc",
+                    "tokenId": "0x1",
+                    "shard": 7,
+                }
+            ),
+            {"Content-Type": "application/json"},
+        )
+        nft_response = conn.getresponse()
+        nft_data = json.loads(nft_response.read())
+        conn.close()
+        self.assertEqual(nft_response.status, 200)
+        self.assertTrue(nft_data["ok"])
+        self.assertEqual(nft_data["post"]["pointer"], "eths:7/0xabc")
+        self.assertEqual(nft_data["post"]["shard"], 7)
+
+        status, _, listed = self._get("/api/posts")
+        self.assertEqual(status, 200)
+        board = json.loads(listed)
+        self.assertEqual(board["posts"][0]["pointer"], "eths:7/0xabc")
+        self.assertEqual(board["posts"][0]["tokenId"], "0x1")
+
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/posts/nft",
+            json.dumps({"file": "missing.png", "pointer": "eths:1/0xdef"}),
+            {"Content-Type": "application/json"},
+        )
+        missing = conn.getresponse()
+        missing.read()
+        conn.close()
+        self.assertEqual(missing.status, 400)
 
     def test_scan_skips_leftover_blockchain_dir(self):
         vault = self.root / "blockchain"

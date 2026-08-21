@@ -173,7 +173,7 @@
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then post the crop on Canvasboard.</p>
+        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -248,8 +248,12 @@
         <p class="help-kicker">Canvasboard</p>
         <h2>Posted plates</h2>
         <p class="canvas-status" id="canvasStatus">Crop a plate, then post it on the board.</p>
+        <div class="download-track post-track" id="canvasTrack" hidden>
+          <span class="download-fill" id="canvasFill"></span>
+        </div>
         <div class="canvas-wall" id="canvasWall"></div>
         <div class="opener-actions">
+          <button class="text-btn opener-primary" id="canvasNftAll" type="button">Attach as NFT</button>
           <button class="text-btn" id="canvasClose" type="button">Close</button>
         </div>
       </div>
