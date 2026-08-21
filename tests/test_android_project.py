@@ -57,6 +57,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("toggleRecentSelection", app_js)
         self.assertIn("aria-multiselectable", app_js)
         self.assertIn("startRecentSlideshow", app_js)
+        self.assertIn("recentSlidePlates", app_js)
         self.assertIn("recent-slideshow", app_js)
 
     def test_installable_apk_is_present(self):

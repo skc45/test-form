@@ -177,15 +177,15 @@ function plateSlides(item, index) {
   return cover ? [cover] : [];
 }
 
-function recentPlateMarkup(item, index, className, { slideshow = false } = {}) {
-  const slides = slideshow ? plateSlides(item, index) : [plateCover(item, index)].filter(Boolean);
+function recentPlateMarkup(item, index, className) {
+  const slides = plateSlides(item, index);
   const count = item.photoCount
     ? `${item.photoCount} plate${item.photoCount === 1 ? "" : "s"}`
     : "Folder";
   const selected = isSelectedRecent(item);
   const selectedClass = selected ? " is-selected" : "";
   const media = slides.length
-    ? `<span class="${slideshow ? "recent-slideshow" : "recent-cover"}">${slides
+    ? `<span class="recent-slideshow">${slides
         .map((src, plate) => `<img alt="" src="${escapeHtml(src)}"${plate === 0 ? ' class="is-active"' : ""} />`)
         .join("")}</span>`
     : `<span class="recent-plate-fill"></span>`;
@@ -225,6 +225,13 @@ function ensureSelectedRecents() {
   if (match) state.selectedIds = [match.id];
 }
 
+function recentSlidePlates() {
+  return [
+    ...(els.recentRow?.querySelectorAll("[data-recent]") || []),
+    ...(els.recentTabs?.querySelectorAll("[data-recent]") || []),
+  ];
+}
+
 function stopRecentSlideshow() {
   window.clearInterval(recentSlideTimer);
   recentSlideTimer = 0;
@@ -232,8 +239,8 @@ function stopRecentSlideshow() {
 
 function startRecentSlideshow() {
   stopRecentSlideshow();
-  const plates = [...(els.recentRow?.querySelectorAll("[data-recent]") || [])];
-  if (!plates.length || els.opener?.hidden) return;
+  const plates = recentSlidePlates();
+  if (!plates.length) return;
   plates.forEach((plate, offset) => {
     const slides = [...plate.querySelectorAll(".recent-slideshow img")].filter((img) => !img.classList.contains("is-missing"));
     if (slides.length < 2) return;
@@ -242,11 +249,12 @@ function startRecentSlideshow() {
     plate.dataset.slide = String(start);
   });
   recentSlideTimer = window.setInterval(() => {
-    if (els.opener?.hidden) {
+    const live = recentSlidePlates();
+    if (!live.length) {
       stopRecentSlideshow();
       return;
     }
-    plates.forEach((plate) => {
+    live.forEach((plate) => {
       const slides = [...plate.querySelectorAll(".recent-slideshow img")].filter((img) => !img.classList.contains("is-missing"));
       if (slides.length < 2) return;
       const current = Number(plate.dataset.slide || 0) % slides.length;
@@ -266,10 +274,8 @@ function renderRecentRow() {
     stopRecentSlideshow();
     return;
   }
-  row.innerHTML = state.recents.map((item, index) => recentPlateMarkup(item, index, "recent-plate", { slideshow: true })).join("");
+  row.innerHTML = state.recents.map((item, index) => recentPlateMarkup(item, index, "recent-plate")).join("");
   bindRecentPlateMedia(row);
-  if (!els.opener.hidden) startRecentSlideshow();
-  else stopRecentSlideshow();
 }
 
 function renderRecentTabs() {
@@ -298,6 +304,7 @@ function renderRecentTabs() {
 function renderRecentSelection() {
   renderRecentTabs();
   renderRecentRow();
+  startRecentSlideshow();
 }
 
 function renderHero() {
@@ -902,7 +909,6 @@ function showOpener() {
 
 function hideOpener() {
   els.opener.hidden = true;
-  stopRecentSlideshow();
 }
 
 function restoreDemo() {
