@@ -35,7 +35,9 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("sealPostBlock", app_js)
         self.assertIn("/api/chain", app_js)
         self.assertIn("/api/vault", app_js)
-        self.assertIn("openBlockchainFolder", app_js)
+        self.assertIn("autoEncodeFolder", app_js)
+        self.assertIn("/api/vault/encode", app_js)
+        self.assertIn("ApertureAndroid.encodeFolder", app_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -103,7 +105,9 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("fun chainAppend", store)
         self.assertIn("fun chainLock", main)
         self.assertIn("fun chainLock", store)
-        self.assertIn("fun openBlockchainFolder", main)
+        self.assertIn("fun encodeFolder", main)
+        self.assertIn("fun encodeFolder", store)
+        self.assertIn("CHAIN_DIFFICULTY = 1", store)
         self.assertIn("KEY_CHAIN", store)
         self.assertIn("KEY_VAULT", store)
         self.assertIn("/api/chain", main)

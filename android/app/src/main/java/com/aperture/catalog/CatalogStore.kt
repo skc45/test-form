@@ -57,7 +57,7 @@ class CatalogStore(private val context: Context) {
     fun openTree(uri: Uri) {
         context.contentResolver.takePersistableUriPermission(
             uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
         )
         val name = DocumentFile.fromTreeUri(context, uri)?.name ?: "Folder"
         prefs.edit()
@@ -199,6 +199,7 @@ class CatalogStore(private val context: Context) {
         for (child in children) {
             val name = child.name ?: continue
             if (child.isDirectory) {
+                if (name.equals("blockchain", ignoreCase = true)) continue
                 val next = if (prefix.isEmpty()) name else "$prefix/$name"
                 walk(child, folderName, next, idPrefix)
                 continue
@@ -382,7 +383,7 @@ class CatalogStore(private val context: Context) {
     fun openVaultTree(uri: Uri) {
         context.contentResolver.takePersistableUriPermission(
             uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
         )
         val name = DocumentFile.fromTreeUri(context, uri)?.name ?: "blockchain"
         prefs.edit()
@@ -414,6 +415,49 @@ class CatalogStore(private val context: Context) {
         )
         writeVaultFile(name, packed)
         return vaultPayload().put("vault", name).put("block", block)
+    }
+
+    fun encodeFolder(): JSONObject {
+        val seen = mutableSetOf<String>()
+        val existing = chainArray()
+        for (index in 0 until existing.length()) {
+            val hash = existing.getJSONObject(index).optString("imageHash")
+            if (hash.isNotBlank()) seen += hash
+        }
+        var encoded = 0
+        var skipped = 0
+        for ((key, entry) in media.entries.toList()) {
+            if (key.split('/').any { it.equals("blockchain", ignoreCase = true) }) {
+                skipped += 1
+                continue
+            }
+            val plain = readUriBytes(entry.first)
+            if (plain == null || plain.isEmpty() || plain.size > 25 * 1024 * 1024) {
+                skipped += 1
+                continue
+            }
+            val imageHash = sha256HexBytes(plain)
+            if (imageHash in seen) {
+                skipped += 1
+                continue
+            }
+            val filename = key.substringAfterLast('/')
+            val title = filename.substringBeforeLast('.')
+            val folderName = prefs.getString(KEY_NAME, "Folder").orEmpty().ifBlank { "Folder" }
+            val sealed = chainAppend(title, folderName, key, imageHash)
+            val block = sealed.optJSONObject("block")
+            if (block == null) {
+                skipped += 1
+                continue
+            }
+            val name = vaultFilename(block, filename)
+            val packed = lockBytes(plain, block, key, title, folderName, entry.second)
+            writeVaultFile(name, packed)
+            writeLocalVault(key, name, packed)
+            seen += imageHash
+            encoded += 1
+        }
+        return vaultPayload().put("encoded", encoded).put("skipped", skipped)
     }
 
     private fun vaultPayload(): JSONObject {
@@ -536,6 +580,28 @@ class CatalogStore(private val context: Context) {
             }
         }
         File(defaultVaultDir(), name).writeBytes(bytes)
+    }
+
+    private fun writeLocalVault(key: String, name: String, bytes: ByteArray) {
+        val tree = treeForMediaKey(key) ?: return
+        val root = DocumentFile.fromTreeUri(context, tree) ?: return
+        val dir = root.findFile("blockchain")?.takeIf { it.isDirectory } ?: root.createDirectory("blockchain") ?: return
+        dir.findFile(name)?.delete()
+        val created = dir.createFile("application/octet-stream", name) ?: return
+        context.contentResolver.openOutputStream(created.uri)?.use { it.write(bytes) }
+    }
+
+    private fun treeForMediaKey(key: String): Uri? {
+        if (currentTrees.isEmpty()) return null
+        if (currentTrees.size == 1) return currentTrees.first()
+        val index = key.substringBefore('/').toIntOrNull() ?: return currentTrees.first()
+        return currentTrees.getOrNull(index)
+    }
+
+    private fun sha256HexBytes(data: ByteArray): String {
+        return MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xFF)
+        }
     }
 
     private fun readUriBytes(uri: Uri): ByteArray? {
@@ -894,7 +960,7 @@ class CatalogStore(private val context: Context) {
         private const val KEY_VAULT_NAME = "blockchainFolderName"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
-        private const val CHAIN_DIFFICULTY = 3
+        private const val CHAIN_DIFFICULTY = 1
         private const val GENESIS_PREV = "0000000000000000000000000000000000000000000000000000000000000000"
         private val VAULT_MAGIC = byteArrayOf(0x41, 0x50, 0x43, 0x48)
         private val IMAGE_EXT = setOf(

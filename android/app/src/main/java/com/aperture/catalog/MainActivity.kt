@@ -246,6 +246,11 @@ class MainActivity : AppCompatActivity() {
                 pickFolder.launch(null)
             }
         }
+
+        @JavascriptInterface
+        fun encodeFolder(): String {
+            return store.encodeFolder().toString()
+        }
     }
 
     private fun startDownload(url: String, filename: String) {

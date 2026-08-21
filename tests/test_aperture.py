@@ -134,7 +134,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meta["caption"], "Golden hour")
         self.assertEqual(meta["title"], "Ridge")
         self.assertEqual(meta["file"], data["file"])
-        self.assertTrue(data["block"]["hash"].startswith("0" * 3))
+        self.assertTrue(data["block"]["hash"].startswith("0" * app.CHAIN_DIFFICULTY))
         self.assertEqual(data["block"]["height"], 1)
         self.assertTrue(data["valid"])
         vault = app.cache_home() / "blockchain" / data["vault"]
@@ -180,6 +180,31 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(ctype.startswith("image/"))
         self.assertEqual(body, TINY_PNG)
+
+    def test_vault_encode_endpoint_seals_open_folder(self):
+        conn = HTTPConnection(self.host, self.port, timeout=5)
+        conn.request(
+            "POST",
+            "/api/vault/encode",
+            json.dumps({"path": str(self.root)}),
+            {"Content-Type": "application/json"},
+        )
+        payload = json.loads(conn.getresponse().read())
+        conn.close()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["encoded"], 1)
+        self.assertTrue((self.root / "blockchain").is_dir())
+        self.assertTrue(any((self.root / "blockchain").glob("*.apc")))
+        again = HTTPConnection(self.host, self.port, timeout=5)
+        again.request(
+            "POST",
+            "/api/vault/encode",
+            json.dumps({"path": str(self.root)}),
+            {"Content-Type": "application/json"},
+        )
+        repeated = json.loads(again.getresponse().read())
+        again.close()
+        self.assertEqual(repeated["encoded"], 0)
 
 
 class CacheTests(unittest.TestCase):
@@ -431,6 +456,23 @@ class ChainTests(unittest.TestCase):
         listing = app.list_vault(folder)
         self.assertFalse(listing["valid"])
         self.assertFalse(listing["files"][0]["unlocked"])
+
+    def test_encodes_local_folder_cheaply_and_skips_duplicates(self):
+        self.assertEqual(app.CHAIN_DIFFICULTY, 1)
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        first = app.encode_folders([photos])
+        self.assertEqual(first["encoded"], 1)
+        self.assertTrue(first["valid"])
+        sidecars = list((photos / "blockchain").glob("*.apc"))
+        self.assertEqual(len(sidecars), 1)
+        unlocked = app.unlock_bytes(sidecars[0].read_bytes())
+        self.assertIsNotNone(unlocked)
+        self.assertEqual(unlocked[1], TINY_PNG)
+        second = app.encode_folders([photos])
+        self.assertEqual(second["encoded"], 0)
+        self.assertGreaterEqual(second["skipped"], 1)
 
 
 if __name__ == "__main__":

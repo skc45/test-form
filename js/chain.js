@@ -1,4 +1,4 @@
-export const DIFFICULTY = 3;
+export const DIFFICULTY = 1;
 export const GENESIS_PREV = "0".repeat(64);
 export const CHAIN_KEY = "aperture.chain";
 

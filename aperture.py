@@ -74,7 +74,7 @@ def session_file() -> Path:
     return cache_home() / "session.json"
 
 
-CHAIN_DIFFICULTY = 3
+CHAIN_DIFFICULTY = 1
 GENESIS_PREV = "0" * 64
 
 
@@ -206,6 +206,8 @@ def append_block(title: str, caption: str, filename: str, image_hash: str) -> di
 VAULT_MAGIC = b"APCH"
 VAULT_EXT = ".apc"
 VAULT_EXTS = {".apc", ".aplate"}
+VAULT_DIR_NAME = "blockchain"
+MAX_PLATE_BYTES = 25 * 1024 * 1024
 
 
 def default_vault_dir() -> Path:
@@ -303,12 +305,95 @@ def unlock_bytes(data: bytes, blocks: list[dict] | None = None) -> tuple[dict, b
     return header, plain
 
 
-def save_locked_plate(plain: bytes, block: dict, filename: str, title: str, caption: str, mime: str) -> str:
-    folder = load_vault_folder()
-    folder.mkdir(parents=True, exist_ok=True)
+def save_locked_plate(
+    plain: bytes,
+    block: dict,
+    filename: str,
+    title: str,
+    caption: str,
+    mime: str,
+    extra_dirs: list[Path] | None = None,
+) -> str:
+    packed = lock_bytes(plain, block, filename, title, caption, mime)
     name = vault_filename(block, filename)
-    (folder / name).write_bytes(lock_bytes(plain, block, filename, title, caption, mime))
+    dests = [load_vault_folder(), *(extra_dirs or [])]
+    for folder in dests:
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(packed)
+        except OSError:
+            continue
     return name
+
+
+def in_vault_dir(root: Path, path: Path) -> bool:
+    try:
+        return any(part.lower() == VAULT_DIR_NAME for part in path.relative_to(root.resolve()).parts)
+    except ValueError:
+        return False
+
+
+def encode_image_path(path: Path, folder: Path, seen: set[str]) -> str | None:
+    if not is_image(path) or in_vault_dir(folder, path):
+        return None
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size <= 0 or size > MAX_PLATE_BYTES:
+        return None
+    try:
+        plain = path.read_bytes()
+    except OSError:
+        return None
+    image_hash = hashlib.sha256(plain).hexdigest()
+    if image_hash in seen:
+        return None
+    rel = path.relative_to(folder).as_posix() if path.is_relative_to(folder) else path.name
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    block = append_block(path.stem, folder.name, rel, image_hash)
+    seen.add(image_hash)
+    local_dir = folder / VAULT_DIR_NAME
+    return save_locked_plate(plain, block, rel, path.stem, folder.name, mime, extra_dirs=[local_dir])
+
+
+def encode_folders(folders: list[Path]) -> dict:
+    encoded: list[str] = []
+    skipped = 0
+    seen = {str(block.get("imageHash") or "") for block in load_chain() if str(block.get("imageHash") or "")}
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        root = folder.resolve()
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+            if not is_image(path):
+                continue
+            name = encode_image_path(path, root, seen)
+            if name:
+                encoded.append(name)
+            else:
+                skipped += 1
+    payload = list_vault()
+    payload["encoded"] = len(encoded)
+    payload["skipped"] = skipped
+    payload["names"] = encoded
+    return payload
+
+
+def find_vault_file(folder: Path, name: str) -> Path | None:
+    safe_name = Path(name).name
+    if not safe_name:
+        return None
+    direct = (folder / safe_name).resolve()
+    if direct.is_file() and safe_under(folder, direct):
+        return direct
+    if not folder.is_dir():
+        return None
+    for path in folder.rglob(safe_name):
+        resolved = path.resolve()
+        if resolved.is_file() and resolved.name == safe_name and safe_under(folder, resolved):
+            return resolved
+    return None
 
 
 def is_vault_file(path: Path) -> bool:
@@ -349,7 +434,7 @@ def list_vault(folder: Path | None = None) -> dict:
     files: list[dict] = []
     photos: list[dict] = []
     if root.is_dir():
-        for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
             if not is_vault_file(path):
                 continue
             try:
@@ -603,7 +688,7 @@ def scan_folder(folder: Path) -> list[dict]:
     root = folder.resolve()
     photos: list[dict] = []
     for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if not is_image(path):
+        if in_vault_dir(root, path) or not is_image(path):
             continue
         rel = path.relative_to(root).as_posix()
         parent = path.parent.name if path.parent != root else root.name
@@ -737,6 +822,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/vault/lock":
             self._lock_vault_upload()
             return
+        if parsed.path == "/api/vault/encode":
+            body = self._read_json()
+            folders = self._folders_from_body(body) or list(self.runtime.folders)
+            if not folders:
+                self.send_error(404, "Folder not found")
+                return
+            self._send_json(encode_folders(folders))
+            return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
             return
@@ -749,6 +842,10 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if len(folders) == 1:
             remember_folder(folders[0], len(photos))
         self.runtime.folders = folders
+        try:
+            encode_folders(folders)
+        except OSError:
+            pass
         self._send_json(
             {
                 "ok": True,
@@ -889,8 +986,13 @@ class ApertureHandler(SimpleHTTPRequestHandler):
     def _send_vault_media(self, rel: str) -> None:
         folder = load_vault_folder()
         name = Path(rel).name
-        path = (folder / name).resolve()
-        if not safe_under(folder, path) or not path.is_file():
+        path = find_vault_file(folder, name)
+        if not path:
+            for extra in self.runtime.folders:
+                path = find_vault_file(extra / VAULT_DIR_NAME, name) or find_vault_file(extra, name)
+                if path:
+                    break
+        if not path:
             self.send_error(404, "Not found")
             return
         try:
