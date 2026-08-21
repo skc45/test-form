@@ -34,8 +34,6 @@ ROOT = Path(__file__).resolve().parent
 CACHE_ENV = "APERTURE_CACHE_DIR"
 MAX_RECENTS = 3
 MAX_RECENT_SLIDES = 8
-SEARCH_HIT_LIMIT = 40
-SEARCH_HASH_FILE_LIMIT = 200
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -97,7 +95,6 @@ class Runtime:
 
     def __init__(self, folder: Path | None = None):
         self.folders: list[Path] = [folder.resolve()] if folder else []
-        self.search_folders: list[Path] = []
 
     @property
     def folder(self) -> Path | None:
@@ -351,6 +348,7 @@ ETH_SHARD_COUNT = 64
 ETH_PREFIX = "eths:"
 ETH_MAX_PLATE = 25 * 1024 * 1024
 ETH_LABEL = b"aperture-eth-shard-v1"
+ETH_STANDARD = "erc721"
 
 
 def eth_secret_file() -> Path:
@@ -433,6 +431,43 @@ def shard_pointer(shard: int, address: str) -> str:
     return f"{ETH_PREFIX}{int(shard)}/{address}"
 
 
+def token_id_from_hash(image_hash: bytes) -> str:
+    return "0x" + image_hash.hex()
+
+
+def nft_token_uri(address: str) -> str:
+    return "/api/eth/nft/" + (str(address or "").strip() or normalize_address(address))
+
+
+def nft_metadata(cert: dict) -> dict:
+    address = str(cert.get("address") or "")
+    shard = cert.get("shard")
+    return {
+        "name": str(cert.get("title") or "Plate"),
+        "description": f"Aperture plate attached as an ERC-721 NFT on Ethereum shard {shard}.",
+        "image": f"/media/eth/{address}" if address else "",
+        "external_url": str(cert.get("pointer") or ""),
+        "background_color": "1C5FA8",
+        "attributes": [
+            {"trait_type": "Shard", "value": shard},
+            {"trait_type": "Catalog", "value": cert.get("catalogAddress") or ""},
+            {"trait_type": "File", "value": cert.get("file") or "plate"},
+        ],
+        "token_id": str(cert.get("tokenId") or ""),
+    }
+
+
+def attach_nft(cert: dict, image_hash: bytes) -> dict:
+    address = str(cert.get("address") or "")
+    catalog = str(cert.get("catalogAddress") or catalog_address())
+    cert["standard"] = ETH_STANDARD
+    cert["tokenId"] = token_id_from_hash(image_hash)
+    cert["tokenURI"] = nft_token_uri(address)
+    cert["contract"] = catalog
+    cert["nft"] = nft_metadata(cert)
+    return cert
+
+
 def parse_pointer(code: str) -> dict | None:
     raw = str(code or "").strip()
     if not raw:
@@ -485,16 +520,6 @@ def open_eth_vault(address: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def shard_search_query(located: dict, cert: dict | None) -> str:
-    title = str((cert or {}).get("title") or located.get("title") or "").strip()
-    if title and title.lower() not in {"plate", "eth plate", "ethereum plate"}:
-        return title
-    filename = str((cert or {}).get("file") or "").rsplit(".", 1)[0].strip()
-    if filename and filename.lower() != "plate":
-        return filename
-    return str(located.get("address") or "")
-
-
 def resolve_shard(code: str) -> dict:
     located = parse_pointer(code)
     if not located:
@@ -511,13 +536,17 @@ def resolve_shard(code: str) -> dict:
         located["pointer"] = cert.get("pointer") or located["pointer"]
         located["catalogAddress"] = cert.get("catalogAddress") or catalog_address()
         located["imageHash"] = cert.get("imageHash") or ""
+        located["tokenId"] = cert.get("tokenId") or ""
+        located["tokenURI"] = cert.get("tokenURI") or nft_token_uri(located["address"])
+        located["standard"] = cert.get("standard") or ETH_STANDARD
+        located["contract"] = cert.get("contract") or located["catalogAddress"]
+        located["nft"] = cert.get("nft") if isinstance(cert.get("nft"), dict) else nft_metadata(cert)
     located["certificate"] = cert or {}
-    located["title"] = (cert or {}).get("title") or "ETH plate"
+    located["title"] = (cert or {}).get("title") or (located.get("nft") or {}).get("name") or "ETH NFT"
     located["file"] = (cert or {}).get("file") or "plate"
     located["mime"] = (cert or {}).get("mime") or "application/octet-stream"
     located["src"] = "/media/eth/" + located["address"] if vault is not None else ""
     located["decoded"] = vault is not None
-    located["search"] = shard_search_query(located, cert)
     return located
 
 
@@ -545,6 +574,7 @@ def encode_plate(plain: bytes, title: str = "", filename: str = "plate", mime: s
         "encodedAt": datetime.now().isoformat(timespec="seconds"),
         "tx": {"from": catalog, "to": address, "data": "0x" + image_hash.hex()},
     }
+    attach_nft(cert, image_hash)
     vault = eth_vault_dir() / vault_name(address)
     vault.write_bytes(plain)
     remember_eth_certificate(cert)
@@ -595,6 +625,7 @@ def list_eth() -> dict:
         "ok": True,
         "catalogAddress": ledger.get("catalogAddress") or catalog_address(),
         "count": len(plates),
+        "standard": ETH_STANDARD,
         "plates": plates,
     }
 
@@ -736,159 +767,6 @@ def scan_folders(folders: list[Path]) -> list[dict]:
     return photos
 
 
-def normalize_image_hash(value: str) -> str:
-    hex_upper = "".join(
-        ch for ch in str(value or "").strip().removeprefix("0x").removeprefix("0X") if ch in "0123456789abcdefABCDEF"
-    ).upper()
-    return hex_upper if len(hex_upper) == 64 else ""
-
-
-def search_roots(runtime: Runtime | None = None) -> list[Path]:
-    folders: list[Path] = []
-    seen: set[str] = set()
-
-    def add(raw) -> None:
-        text = str(raw or "").strip()
-        if not text:
-            return
-        folder = Path(text).expanduser()
-        if not folder.is_dir():
-            return
-        try:
-            resolved = folder.resolve()
-        except OSError:
-            return
-        key = str(resolved)
-        if key in seen:
-            return
-        seen.add(key)
-        folders.append(resolved)
-
-    if runtime:
-        for item in runtime.folders:
-            add(item)
-    session = load_disk_session()
-    for item in session.get("recents") or []:
-        if isinstance(item, dict):
-            add(item.get("path") or item.get("id"))
-        else:
-            add(item)
-    add(session.get("lastFolder"))
-    return folders
-
-
-def photo_search_blob(photo: dict) -> str:
-    return " ".join(
-        str(photo.get(key) or "") for key in ("title", "location", "photographer", "category", "id")
-    ).lower()
-
-
-def make_search_photo(root: Path, path: Path, ident: str) -> dict:
-    parent = path.parent.name if path.parent != root else root.name
-    location = path.parent.relative_to(root).as_posix() if path.parent != root else root.name
-    try:
-        year = datetime.fromtimestamp(path.stat().st_mtime).year
-    except OSError:
-        year = datetime.now().year
-    media = "/media/" + quote(ident)
-    return {
-        "id": ident,
-        "title": path.stem,
-        "photographer": root.name,
-        "location": location,
-        "year": year,
-        "category": slug(parent),
-        "src": media,
-        "thumb": media,
-        "hero": media,
-        "local": True,
-        "featured": False,
-    }
-
-
-def search_catalog(
-    query: str,
-    image_hash: str = "",
-    folders: list[Path] | None = None,
-    open_folders: list[Path] | None = None,
-) -> dict:
-    needle = str(query or "").strip().lower()
-    digest = normalize_image_hash(image_hash)
-    roots = folders or []
-    opened: list[Path] = []
-    for item in open_folders or []:
-        try:
-            opened.append(item.resolve())
-        except OSError:
-            continue
-    open_keys = {str(item): index for index, item in enumerate(opened)}
-    multi_open = len(opened) > 1
-    if not needle and not digest:
-        return {"ok": True, "query": str(query or "").strip(), "imageHash": "", "count": 0, "photos": [], "exact": False}
-
-    hits: list[dict] = []
-    exact: dict | None = None
-    hashed = 0
-    seen: set[str] = set()
-
-    for search_index, folder in enumerate(roots):
-        open_index = open_keys.get(str(folder))
-        try:
-            paths = sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower())
-        except OSError:
-            continue
-        for path in paths:
-            if in_skip_dir(folder, path) or not is_image(path):
-                continue
-            rel = path.relative_to(folder).as_posix()
-            if open_index is not None:
-                ident = f"{open_index}/{rel}" if multi_open else rel
-            else:
-                ident = f"search/{search_index}/{rel}"
-            photo = make_search_photo(folder, path, ident)
-            text_hit = bool(needle) and needle in photo_search_blob(photo)
-            hash_hit = False
-            if digest and hashed < SEARCH_HASH_FILE_LIMIT and exact is None:
-                try:
-                    size = path.stat().st_size
-                except OSError:
-                    size = 0
-                if 0 < size <= ETH_MAX_PLATE:
-                    hashed += 1
-                    try:
-                        if to_hex(sha256_bytes(path.read_bytes())) == digest:
-                            hash_hit = True
-                            photo["exact"] = True
-                            exact = photo
-                    except OSError:
-                        pass
-            if not text_hit and not hash_hit:
-                continue
-            if ident in seen:
-                continue
-            seen.add(ident)
-            hits.append(photo)
-            if len(hits) >= SEARCH_HIT_LIMIT and (exact is not None or not digest):
-                break
-        if len(hits) >= SEARCH_HIT_LIMIT and (exact is not None or not digest):
-            break
-
-    if exact:
-        hits = [exact] + [item for item in hits if item["id"] != exact["id"]]
-    hits = hits[:SEARCH_HIT_LIMIT]
-    for index, photo in enumerate(hits):
-        photo["index"] = index
-        photo["featured"] = index == 0
-    return {
-        "ok": True,
-        "query": str(query or "").strip(),
-        "imageHash": digest.lower(),
-        "count": len(hits),
-        "photos": hits,
-        "exact": exact is not None,
-    }
-
-
 class ApertureHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, runtime: Runtime | None = None, folder: Path | None = None, app_mode: bool = True, **kwargs):
         self.runtime = runtime or Runtime(folder)
@@ -927,14 +805,6 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             recents = decorate_recents(session.get("recents") or [])
             self._send_json({**session, "exists": exists, "recents": recents})
             return
-        if parsed.path == "/api/search":
-            qs = parse_qs(parsed.query)
-            query = str((qs.get("q") or qs.get("query") or [""])[0])
-            image_hash = str((qs.get("hash") or qs.get("h") or qs.get("imageHash") or [""])[0])
-            roots = search_roots(self.runtime)
-            self.runtime.search_folders = roots
-            self._send_json(search_catalog(query, image_hash, roots, self.runtime.folders))
-            return
         if parsed.path == "/api/recent-cover":
             self._send_recent_cover(parsed.query)
             return
@@ -952,6 +822,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
                 self.send_error(400, str(located.get("error") or "Invalid shard"))
                 return
             self._send_json(located)
+            return
+        if parsed.path.startswith("/api/eth/nft/"):
+            self._send_nft_metadata(unquote(parsed.path[len("/api/eth/nft/") :]))
             return
         if parsed.path.startswith("/media/eth/"):
             self._send_eth_media(unquote(parsed.path[len("/media/eth/") :]))
@@ -1135,6 +1008,25 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(plain)
 
+    def _send_nft_metadata(self, address: str) -> None:
+        cert = lookup_eth_certificate(address)
+        if not cert:
+            self.send_error(404, "Unknown NFT")
+            return
+        meta = cert.get("nft") if isinstance(cert.get("nft"), dict) else nft_metadata(cert)
+        self._send_json(
+            {
+                **meta,
+                "ok": True,
+                "standard": cert.get("standard") or ETH_STANDARD,
+                "tokenId": cert.get("tokenId") or meta.get("token_id") or "",
+                "tokenURI": cert.get("tokenURI") or nft_token_uri(cert.get("address") or address),
+                "contract": cert.get("contract") or cert.get("catalogAddress") or catalog_address(),
+                "address": cert.get("address") or normalize_address(address),
+                "pointer": cert.get("pointer") or "",
+            }
+        )
+
     def _read_json(self) -> dict:
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -1189,35 +1081,11 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self._send_image_file(covers[plate])
 
     def _send_media(self, rel: str) -> None:
-        rel = posixpath.normpath(rel).lstrip("/")
-        if rel.startswith("search/"):
-            folders = self.runtime.search_folders or search_roots(self.runtime)
-            if not self.runtime.search_folders:
-                self.runtime.search_folders = folders
-            rest = rel[len("search/") :]
-            head, sep, relative = rest.partition("/")
-            if not sep:
-                self.send_error(404, "Not found")
-                return
-            try:
-                index = int(head)
-            except ValueError:
-                self.send_error(404, "Not found")
-                return
-            if index < 0 or index >= len(folders):
-                self.send_error(404, "Not found")
-                return
-            folder = folders[index]
-            path = (folder / relative).resolve()
-            if not safe_under(folder, path) or not is_image(path):
-                self.send_error(404, "Not found")
-                return
-            self._send_image_file(path)
-            return
         folders = self.runtime.folders
         if not folders:
             self.send_error(404, "No folder open")
             return
+        rel = posixpath.normpath(rel).lstrip("/")
         folder = self.folder
         relative = rel
         if len(folders) > 1:

@@ -30,7 +30,6 @@ const state = {
   recents: [],
   selectedIds: [],
   postPhoto: null,
-  searchHits: [],
 };
 
 const els = {
@@ -103,7 +102,6 @@ let postBusy = false;
 let ethBusy = false;
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
-let searchTimer = 0;
 
 function slug(value) {
   return String(value || "folder")
@@ -144,11 +142,7 @@ function revokeBlobs() {
 
 function visiblePhotos() {
   const q = state.query.trim().toLowerCase();
-  const hits = state.searchHits || [];
-  const hitIds = new Set(hits.map((item) => item.id));
-  const fromServer = hits.filter((photo) => state.filter === "all" || photo.category === state.filter);
-  const fromCatalog = state.photos.filter((photo) => {
-    if (hitIds.has(photo.id)) return false;
+  return state.photos.filter((photo) => {
     const catOk = state.filter === "all" || photo.category === state.filter;
     if (!catOk) return false;
     if (!q) return true;
@@ -157,7 +151,6 @@ function visiblePhotos() {
       .toLowerCase()
       .includes(q);
   });
-  return fromServer.length ? [...fromServer, ...fromCatalog] : fromCatalog;
 }
 
 function bindImage(img, photo, size = "thumb") {
@@ -549,7 +542,6 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
   if (source !== "folder") state.folderHandle = null;
   state.filter = "all";
   state.query = "";
-  state.searchHits = [];
   els.search.value = "";
   els.brandKicker.textContent = folderName || "Vol. I · Photographica";
   hideOpener();
@@ -568,7 +560,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> encode onto shard`;
+      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> attach as NFT`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -610,7 +602,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · <kbd>X</kbd> encode onto shard · <kbd>T</kbd> skin";
+    hint.innerHTML = "Open a folder · <kbd>X</kbd> attach as NFT · <kbd>T</kbd> skin";
   }
 }
 
@@ -1052,7 +1044,7 @@ function setEthProgress(pct, label) {
   if (els.ethFill) els.ethFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
   if (label && els.ethStatus) els.ethStatus.textContent = label;
   if (els.ethBar) els.ethBar.classList.toggle("is-busy", ethBusy);
-  if (els.ethCopy) els.ethCopy.textContent = ethBusy ? "Writing shard…" : "Encode onto shard";
+  if (els.ethCopy) els.ethCopy.textContent = ethBusy ? "Attaching NFT…" : "Attach as NFT";
 }
 
 async function fetchEthShard() {
@@ -1078,27 +1070,28 @@ function paintEthShard(listing) {
   const address = listing?.catalogAddress || "";
   if (els.ethCatalogAddress) {
     els.ethCatalogAddress.hidden = !address;
-    els.ethCatalogAddress.textContent = address ? `Catalog ${address}` : "";
+    els.ethCatalogAddress.textContent = address ? `Collection ${address}` : "";
   }
   if (els.ethList) {
     els.ethList.innerHTML = plates
       .slice(0, 12)
-      .map(
-        (item) => `
+      .map((item) => {
+        const token = item.tokenId || item.nft?.token_id || "";
+        return `
       <li>
         <button class="eth-plate" type="button" data-pointer="${escapeHtml(item.pointer || item.address || "")}" data-address="${escapeHtml(item.address || "")}">
-          <strong>${escapeHtml(item.title || item.file || "Plate")}</strong>
-          <span>Shard ${escapeHtml(String(item.shard ?? "—"))} · ${escapeHtml(item.address || "")}</span>
-          <span>${escapeHtml(item.pointer || "")}</span>
+          <strong>${escapeHtml(item.title || item.nft?.name || item.file || "NFT")}</strong>
+          <span>NFT ${escapeHtml(token ? shortAddress(token) : "erc721")} · shard ${escapeHtml(String(item.shard ?? "—"))}</span>
+          <span>${escapeHtml(item.pointer || item.tokenURI || "")}</span>
         </button>
-      </li>`
-      )
+      </li>`;
+      })
       .join("");
   }
   if (els.ethStatus && !ethBusy) {
     els.ethStatus.textContent = plates.length
-      ? `${plates.length} plate${plates.length === 1 ? "" : "s"} on the Ethereum shard`
-      : "Place plates onto an Ethereum shard and open them from a 0x pointer.";
+      ? `${plates.length} NFT${plates.length === 1 ? "" : "s"} attached to the Ethereum shard`
+      : "Attach plates as NFTs on an Ethereum shard, then open them from a 0x pointer.";
   }
 }
 
@@ -1142,12 +1135,12 @@ async function encodePhotoOnEth(photo, onProgress) {
 async function encodeCatalogOnEth() {
   if (ethBusy || !state.photos.length) return;
   ethBusy = true;
-  setEthProgress(4, "Writing shard…");
+  setEthProgress(4, "Attaching NFTs…");
   try {
     if (window.ApertureAndroid?.ethEncodeFolder) {
       const listing = JSON.parse(window.ApertureAndroid.ethEncodeFolder() || "{}");
       paintEthShard(listing);
-      setEthProgress(100, listing.count ? `${listing.count} plates on shard` : "Encoded onto shard");
+      setEthProgress(100, listing.count ? `${listing.count} NFTs on shard` : "Attached as NFTs");
       return;
     }
     if (!window.ApertureAndroid) {
@@ -1161,7 +1154,7 @@ async function encodeCatalogOnEth() {
           const listing = await response.json();
           if (listing.encoded || listing.count) {
             paintEthShard(listing);
-            setEthProgress(100, `${listing.count || listing.encoded} plates on shard`);
+            setEthProgress(100, `${listing.count || listing.encoded} NFTs on shard`);
             return;
           }
         }
@@ -1173,19 +1166,19 @@ async function encodeCatalogOnEth() {
     let encoded = 0;
     let listing = await fetchEthShard();
     for (let i = 0; i < photos.length; i += 1) {
-      setEthProgress(Math.round(((i + 1) / photos.length) * 92), `Sharding ${i + 1} of ${photos.length}…`);
+      setEthProgress(Math.round(((i + 1) / photos.length) * 92), `Attaching ${i + 1} of ${photos.length}…`);
       const result = await encodePhotoOnEth(photos[i]);
       if (result?.ok !== false && (result.certificate || result.address)) encoded += 1;
     }
     listing = await fetchEthShard();
     paintEthShard(listing);
-    setEthProgress(100, encoded ? `${listing.count || encoded} plates on shard` : "Could not encode");
+    setEthProgress(100, encoded ? `${listing.count || encoded} NFTs on shard` : "Could not attach");
   } catch {
-    setEthProgress(0, "Could not encode onto shard");
+    setEthProgress(0, "Could not attach as NFT");
   } finally {
     ethBusy = false;
     if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
+    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1193,18 +1186,18 @@ async function encodeCurrentOnEth() {
   const photo = currentPlate();
   if (!photo || ethBusy) return;
   ethBusy = true;
-  setEthProgress(8, `Sharding ${photo.title || "plate"}…`);
+  setEthProgress(8, `Attaching ${photo.title || "plate"}…`);
   try {
     const result = await encodePhotoOnEth(photo, (pct) => setEthProgress(Math.max(10, pct), "Reading plate…"));
     if (result?.pointer && els.ethPointerInput) els.ethPointerInput.value = result.pointer;
     paintEthShard(await fetchEthShard());
-    setEthProgress(100, result?.address ? `Shard ${result.shard} · ${shortAddress(result.address)}` : "Encoded onto shard");
+    setEthProgress(100, result?.address ? `NFT ${shortAddress(result.address)} · shard ${result.shard}` : "Attached as NFT");
   } catch {
-    setEthProgress(0, "Could not encode this plate");
+    setEthProgress(0, "Could not attach this plate");
   } finally {
     ethBusy = false;
     if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
+    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1221,8 +1214,10 @@ function insertDecodedPlate(photo) {
     item.featured = index === 0;
   });
   state.photos = next;
-  if (!state.categories.some((cat) => cat.id === "eth")) {
-    state.categories = [...state.categories, { id: "eth", label: "ETH" }];
+  const cat = photo.category || "nft";
+  const label = cat === "nft" ? "NFT" : "ETH";
+  if (!state.categories.some((item) => item.id === cat)) {
+    state.categories = [...state.categories, { id: cat, label }];
   }
   renderFilters();
   renderHero();
@@ -1230,85 +1225,19 @@ function insertDecodedPlate(photo) {
   openViewer(photo.id);
 }
 
-async function searchCatalogOnServer(query, imageHash = "") {
-  const q = String(query || "").trim();
-  const hash = String(imageHash || "").trim();
-  if (!hash && q.length < 2) {
-    return { ok: true, photos: [], count: 0, exact: false, query: q };
-  }
-  try {
-    if (window.ApertureAndroid?.searchCatalog) {
-      const located = JSON.parse(window.ApertureAndroid.searchCatalog(q, hash) || "{}");
-      if (located?.ok) return located;
-    }
-  } catch {
-    /* fall through to HTTP */
-  }
-  try {
-    const params = new URLSearchParams();
-    if (q) params.set("q", q);
-    if (hash) params.set("hash", hash);
-    const response = await fetch(`/api/search?${params}`, { headers: { Accept: "application/json" } });
-    if (!response.ok) return { ok: false, photos: [] };
-    return await response.json();
-  } catch {
-    return { ok: false, photos: [] };
-  }
-}
-
-function applyServerSearch(result) {
-  const photos = Array.isArray(result?.photos) ? result.photos : [];
-  state.searchHits = photos;
-  const extraCats = categoriesFrom([...photos, ...state.photos]).filter(
-    (cat) => cat.id !== "all" && !state.categories.some((item) => item.id === cat.id)
-  );
-  if (extraCats.length) state.categories = [...state.categories, ...extraCats];
-  renderFilters();
-  renderHero();
-  renderCatalog();
-  return photos;
-}
-
-function scheduleServerSearch() {
-  window.clearTimeout(searchTimer);
-  const q = String(els.search?.value || "").trim();
-  if (q.length < 2) {
-    if (!q) {
-      state.searchHits = [];
-      renderCatalog();
-    }
-    return;
-  }
-  searchTimer = window.setTimeout(() => {
-    const requested = String(els.search?.value || "").trim();
-    void (async () => {
-      const result = await searchCatalogOnServer(requested);
-      if (String(els.search?.value || "").trim() !== requested) return;
-      applyServerSearch(result);
-    })();
-  }, 320);
-}
-
-async function initializeShardSearch(located) {
-  const query = String(located?.search || located?.title || located?.address || "").trim();
-  const imageHash = String(located?.imageHash || located?.certificate?.imageHash || "").trim();
-  closeEthOverlay();
-  state.query = query;
-  state.filter = "all";
-  if (els.search) {
-    els.search.value = query;
-    els.search.focus();
-    els.search.select();
-  }
-  setEthProgress(40, query ? `Searching catalog for ${query}` : "Shard matched — searching catalog");
-  const result = await searchCatalogOnServer(query, imageHash);
-  const photos = applyServerSearch(result);
-  const exact = photos.find((item) => item.exact) || (result?.exact ? photos[0] : null);
-  if (exact?.id) openViewer(exact.id);
-  setEthProgress(
-    100,
-    exact ? `Found ${exact.title}` : query ? `Searching catalog for ${query}` : "Shard matched — searching catalog"
-  );
+function nftPlaceholderSrc(located) {
+  const title = escapeHtml(located?.nft?.name || located?.title || "NFT");
+  const token = String(located?.tokenId || located?.certificate?.tokenId || located?.nft?.token_id || "");
+  const shard = located?.shard == null ? "shard" : `shard ${located.shard}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 750">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7ec8f5"/><stop offset="1" stop-color="#1C5FA8"/></linearGradient></defs>
+    <rect width="600" height="750" fill="url(#g)"/>
+    <path d="M300 150l110 145-110 270-110-270z" fill="none" stroke="#ffffff" stroke-width="8"/>
+    <text x="300" y="620" text-anchor="middle" fill="#ffffff" font-family="Outfit,sans-serif" font-size="28">${title}</text>
+    <text x="300" y="656" text-anchor="middle" fill="#d9f0ff" font-family="Outfit,sans-serif" font-size="16">${escapeHtml(shard)} · ERC-721</text>
+    <text x="300" y="684" text-anchor="middle" fill="#d9f0ff" font-family="Outfit,sans-serif" font-size="14">${escapeHtml(token ? shortAddress(token) : "")}</text>
+  </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 async function openEthShard(code) {
@@ -1356,12 +1285,15 @@ async function openEthShard(code) {
         if (cert && located.shard != null && Number(cert.shard) !== located.shard) located = { ok: false };
         else if (cert) {
           located.certificate = cert;
-          located.title = cert.title || "ETH plate";
+          located.title = cert.title || cert.nft?.name || "ETH NFT";
           located.shard = cert.shard;
           located.pointer = cert.pointer || located.pointer;
           located.catalogAddress = cert.catalogAddress || "";
           located.imageHash = cert.imageHash || "";
-          located.search = cert.title || cert.file || located.address;
+          located.tokenId = cert.tokenId || "";
+          located.tokenURI = cert.tokenURI || eth.nftTokenURI(located.address);
+          located.standard = cert.standard || "erc721";
+          located.nft = cert.nft || eth.nftMetadata(cert);
         }
         const bytes = eth.loadBytes(located.address);
         if (bytes) {
@@ -1379,35 +1311,35 @@ async function openEthShard(code) {
       return;
     }
     const shardLabel = located.shard == null ? "shard" : `shard ${located.shard}`;
-    showPointerReadout(`${shardLabel} · ${located.address}`);
+    const tokenId = located.tokenId || located.certificate?.tokenId || located.nft?.token_id || "";
+    showPointerReadout(tokenId ? `${shardLabel} · NFT ${shortAddress(tokenId)}` : `${shardLabel} · ${located.address}`);
     let src = located.src || "";
     if (!src && located.decoded && located.address) src = `/media/eth/${located.address}`;
-    if (!src) {
-      await initializeShardSearch(located);
-      return;
-    }
+    if (!src) src = nftPlaceholderSrc(located);
     const photo = {
       id: `eth/${located.address}`,
-      title: located.title || located.certificate?.title || "ETH plate",
-      photographer: "Ethereum shard",
-      location: located.address,
+      title: located.nft?.name || located.title || located.certificate?.title || "ETH NFT",
+      photographer: "Ethereum NFT",
+      location: tokenId ? `Token ${tokenId}` : located.address,
       year: new Date().getFullYear(),
-      category: "eth",
+      category: "nft",
       src,
       thumb: src,
       hero: src,
       local: true,
       featured: true,
+      tokenId,
+      tokenURI: located.tokenURI || located.certificate?.tokenURI || "",
     };
     insertDecodedPlate(photo);
     closeEthOverlay();
-    setEthProgress(100, `Opened ${shortAddress(located.address)}`);
+    setEthProgress(100, `Opened NFT ${shortAddress(located.address)}`);
   } catch {
     setEthProgress(0, "Could not open that shard");
   } finally {
     ethBusy = false;
     if (els.ethBar) els.ethBar.classList.remove("is-busy");
-    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
+    if (els.ethCopy) els.ethCopy.textContent = "Attach as NFT";
   }
 }
 
@@ -1418,7 +1350,7 @@ function downloadEthShard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Aperture-eth-${slug(state.folderName || "catalog")}.json`;
+    a.download = `Aperture-nft-${slug(state.folderName || "catalog")}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
     if (window.ApertureAndroid?.shareEth) window.ApertureAndroid.shareEth();
@@ -1905,9 +1837,7 @@ async function wire() {
 
   els.search.addEventListener("input", () => {
     state.query = els.search.value;
-    if (!state.query.trim()) state.searchHits = [];
     renderCatalog();
-    scheduleServerSearch();
   });
 
   els.layoutBtn.addEventListener("click", () => {

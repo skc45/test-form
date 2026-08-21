@@ -89,51 +89,6 @@ class ServerTests(unittest.TestCase):
         status, _, _ = self._get("/media/../../aperture.py")
         self.assertEqual(status, 404)
 
-    def test_search_open_folder_recents_and_hash(self):
-        other = Path(self.tmp.name) / "other-album"
-        other.mkdir()
-        (other / "ridge.png").write_bytes(TINY_PNG)
-        app.remember_folder(self.root, 1)
-        app.remember_folder(other, 1)
-
-        status, ctype, body = self._get("/api/search")
-        self.assertEqual(status, 200)
-        self.assertIn("application/json", ctype)
-        empty = json.loads(body)
-        self.assertTrue(empty["ok"])
-        self.assertEqual(empty["count"], 0)
-        self.assertEqual(empty["photos"], [])
-
-        status, _, body = self._get("/api/search?q=ridge")
-        found = json.loads(body)
-        self.assertEqual(status, 200)
-        self.assertGreaterEqual(found["count"], 1)
-        hit = next(photo for photo in found["photos"] if photo["title"] == "ridge")
-        self.assertTrue(hit["id"].startswith("search/"))
-        self.assertIn("ridge.png", hit["id"])
-        self.assertTrue(hit["src"].startswith("/media/search/"))
-
-        status, ctype, payload = self._get("/media/" + hit["id"])
-        self.assertEqual(status, 200)
-        self.assertTrue(ctype.startswith("image/"))
-        self.assertEqual(payload, TINY_PNG)
-
-        status, _, _ = self._get("/media/search/0/../../aperture.py")
-        self.assertEqual(status, 404)
-
-        digest = app.to_hex(app.sha256_bytes(TINY_PNG))
-        status, _, body = self._get("/api/search?hash=" + digest)
-        hashed = json.loads(body)
-        self.assertEqual(status, 200)
-        self.assertTrue(hashed["exact"])
-        self.assertGreaterEqual(hashed["count"], 1)
-        self.assertTrue(hashed["photos"][0]["exact"])
-        self.assertEqual(hashed["photos"][0]["id"], "plate.png")
-
-        status, _, body = self._get("/api/search?q=plate")
-        titled = json.loads(body)
-        self.assertTrue(any(photo["id"] == "plate.png" for photo in titled["photos"]))
-
     def test_index_served(self):
         status, ctype, body = self._get("/")
         self.assertEqual(status, 200)
@@ -150,8 +105,10 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="skinEditor"', body)
         self.assertIn(b'id="themeBtn"', body)
         self.assertIn(b'id="ethShard"', body)
-        self.assertIn(b"Encode onto shard", body)
+        self.assertIn(b"Attach as NFT", body)
         self.assertIn(b'id="ethBar"', body)
+        self.assertIn(b"Open NFT", body)
+        self.assertNotIn(b"searches the catalog", body)
         self.assertNotIn(b'id="xrpLedger"', body)
         self.assertNotIn(b"Encode onto XRP", body)
 
@@ -476,6 +433,11 @@ class EthShardTests(unittest.TestCase):
         self.assertTrue(result["pointer"].startswith("eths:"))
         cert = result["certificate"]
         self.assertEqual(cert["kind"], "aperture-eth-shard")
+        self.assertEqual(cert["standard"], "erc721")
+        self.assertTrue(cert["tokenId"].startswith("0x"))
+        self.assertEqual(cert["tokenURI"], "/api/eth/nft/" + address)
+        self.assertEqual(cert["nft"]["name"], "Ridge")
+        self.assertEqual(cert["nft"]["image"], "/media/eth/" + address)
         self.assertEqual(cert["tx"]["to"], address)
         self.assertEqual(cert["tx"]["from"], result["catalogAddress"])
         vault = app.eth_vault_dir() / result["vault"]
@@ -492,7 +454,7 @@ class EthShardTests(unittest.TestCase):
         by_address = app.resolve_shard(address)
         self.assertEqual(by_address["address"].lower(), address.lower())
 
-    def test_match_without_image_sets_search(self):
+    def test_match_without_image_keeps_nft(self):
         result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
         vault = app.eth_vault_dir() / result["vault"]
         vault.unlink()
@@ -500,7 +462,10 @@ class EthShardTests(unittest.TestCase):
         self.assertTrue(resolved["ok"])
         self.assertFalse(resolved["decoded"])
         self.assertEqual(resolved["src"], "")
-        self.assertEqual(resolved["search"], "Ridge")
+        self.assertEqual(resolved["standard"], "erc721")
+        self.assertEqual(resolved["tokenId"], result["certificate"]["tokenId"])
+        self.assertEqual(resolved["nft"]["name"], "Ridge")
+        self.assertNotIn("search", resolved)
         self.assertFalse(app.resolve_shard("eths:0/0x0000000000000000000000000000000000000000").get("ok"))
         self.assertIsNone(app.parse_pointer("not-a-shard"))
 
@@ -540,6 +505,15 @@ class EthShardTests(unittest.TestCase):
             self.assertTrue(posted["address"].startswith("0x"))
             self.assertEqual(posted["certificate"]["title"], "Ridge")
             self.assertTrue(posted["pointer"].startswith("eths:"))
+            self.assertEqual(posted["certificate"]["standard"], "erc721")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/eth/nft/" + posted["address"])
+            nft = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertEqual(nft["name"], "Ridge")
+            self.assertEqual(nft["image"], "/media/eth/" + posted["address"])
+            self.assertEqual(nft["tokenId"], posted["certificate"]["tokenId"])
 
             conn = HTTPConnection(host, port, timeout=5)
             conn.request("POST", "/api/eth", json.dumps({"path": str(photos)}), {"Content-Type": "application/json"})
@@ -565,6 +539,8 @@ class EthShardTests(unittest.TestCase):
             spotted = json.loads(conn.getresponse().read())
             conn.close()
             self.assertEqual(spotted["address"].lower(), posted["address"].lower())
+            self.assertEqual(spotted["standard"], "erc721")
+            self.assertTrue(spotted["tokenId"].startswith("0x"))
 
             conn = HTTPConnection(host, port, timeout=5)
             conn.request("GET", "/media/eth/" + posted["address"])

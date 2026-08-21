@@ -78,6 +78,31 @@ export function shardPointer(shard, address) {
   return `${PREFIX}${Number(shard)}/${address}`;
 }
 
+export function tokenIdFromHash(imageHash) {
+  return `0x${toHex(imageHash)}`;
+}
+
+export function nftTokenURI(address) {
+  return `/api/eth/nft/${address || normalizeAddress(address)}`;
+}
+
+export function nftMetadata(cert) {
+  const address = cert.address || "";
+  return {
+    name: cert.title || "Plate",
+    description: `Aperture plate attached as an ERC-721 NFT on Ethereum shard ${cert.shard}.`,
+    image: address ? `/media/eth/${address}` : "",
+    external_url: cert.pointer || "",
+    background_color: "1C5FA8",
+    attributes: [
+      { trait_type: "Shard", value: cert.shard },
+      { trait_type: "Catalog", value: cert.catalogAddress || "" },
+      { trait_type: "File", value: cert.file || "plate" },
+    ],
+    token_id: cert.tokenId || "",
+  };
+}
+
 export function parsePointer(code) {
   let raw = String(code || "").trim();
   if (!raw) return null;
@@ -139,6 +164,11 @@ export async function encodePlate(plain, meta, secret) {
       data: `0x${toHex(imageHash)}`,
     },
   };
+  cert.standard = "erc721";
+  cert.tokenId = tokenIdFromHash(imageHash);
+  cert.tokenURI = nftTokenURI(address);
+  cert.contract = catalog;
+  cert.nft = nftMetadata(cert);
   rememberBytes(address, bytes);
   return { ok: true, certificate: cert, address, catalogAddress: catalog, shard, pointer };
 }

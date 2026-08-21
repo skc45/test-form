@@ -173,147 +173,6 @@ class CatalogStore(private val context: Context) {
         )
     }
 
-    fun searchResponse(query: String, imageHash: String): WebResourceResponse {
-        return json(searchCatalog(query, imageHash))
-    }
-
-    fun searchCatalog(query: String, imageHash: String): JSONObject {
-        val needle = query.trim().lowercase(Locale.US)
-        val digest = normalizeImageHash(imageHash)
-        if (needle.isEmpty() && digest.isEmpty()) {
-            return JSONObject()
-                .put("ok", true)
-                .put("query", query.trim())
-                .put("imageHash", "")
-                .put("count", 0)
-                .put("photos", JSONArray())
-                .put("exact", false)
-        }
-        val roots = searchRoots()
-        val openKeys = currentTrees.mapIndexed { index, uri -> uri.toString() to index }.toMap()
-        val multiOpen = currentTrees.size > 1
-        val hits = mutableListOf<JSONObject>()
-        val seen = mutableSetOf<String>()
-        var exact: JSONObject? = null
-        var hashed = 0
-
-        roots.forEachIndexed { searchIndex, tree ->
-            val root = DocumentFile.fromTreeUri(context, tree) ?: return@forEachIndexed
-            val folderName = root.name ?: "Folder"
-            val openIndex = openKeys[tree.toString()]
-            val found = mutableListOf<SearchPlate>()
-            collectSearch(root, "", found)
-            for (plate in found) {
-                val ident = when {
-                    openIndex != null && multiOpen -> "$openIndex/${plate.rel}"
-                    openIndex != null -> plate.rel
-                    else -> "search/$searchIndex/${plate.rel}"
-                }
-                if (openIndex == null) {
-                    media[ident] = plate.uri to plate.mime
-                }
-                val parent = if (plate.rel.contains("/")) plate.rel.substringBeforeLast("/").substringAfterLast("/") else folderName
-                val location = if (plate.rel.contains("/")) plate.rel.substringBeforeLast("/") else folderName
-                val title = plate.name.substringBeforeLast('.')
-                val mediaPath = "/media/" + Uri.encode(ident)
-                val photo = JSONObject()
-                    .put("id", ident)
-                    .put("title", title)
-                    .put("photographer", folderName)
-                    .put("location", location)
-                    .put("year", plate.year)
-                    .put("category", slug(parent))
-                    .put("src", mediaPath)
-                    .put("thumb", mediaPath)
-                    .put("hero", mediaPath)
-                    .put("local", true)
-                    .put("featured", false)
-                val blob = listOf(title, location, folderName, slug(parent), ident).joinToString(" ").lowercase(Locale.US)
-                val textHit = needle.isNotEmpty() && blob.contains(needle)
-                var hashHit = false
-                if (digest.isNotEmpty() && hashed < SEARCH_HASH_FILE_LIMIT && exact == null) {
-                    val bytes = readUriBytesLimited(plate.uri)
-                    if (bytes != null) {
-                        hashed += 1
-                        if (toHex(sha256(bytes)) == digest) {
-                            hashHit = true
-                            photo.put("exact", true)
-                            exact = photo
-                        }
-                    }
-                }
-                if (!textHit && !hashHit) continue
-                if (!seen.add(ident)) continue
-                hits += photo
-                if (hits.size >= SEARCH_HIT_LIMIT && (exact != null || digest.isEmpty())) break
-            }
-            if (hits.size >= SEARCH_HIT_LIMIT && (exact != null || digest.isEmpty())) return@forEachIndexed
-        }
-
-        val ordered = mutableListOf<JSONObject>()
-        exact?.let { match ->
-            ordered += match
-            hits.filterTo(ordered) { it.optString("id") != match.optString("id") }
-        } ?: ordered.addAll(hits)
-        val capped = ordered.take(SEARCH_HIT_LIMIT)
-        capped.forEachIndexed { index, photo ->
-            photo.put("index", index)
-            photo.put("featured", index == 0)
-        }
-        return JSONObject()
-            .put("ok", true)
-            .put("query", query.trim())
-            .put("imageHash", digest.lowercase(Locale.US))
-            .put("count", capped.size)
-            .put("photos", JSONArray(capped))
-            .put("exact", exact != null)
-    }
-
-    private data class SearchPlate(
-        val rel: String,
-        val name: String,
-        val year: Int,
-        val uri: Uri,
-        val mime: String,
-    )
-
-    private fun searchRoots(): List<Uri> {
-        val out = linkedMapOf<String, Uri>()
-        currentTrees.forEach { out[it.toString()] = it }
-        val recents = recentsArray()
-        for (index in 0 until recents.length()) {
-            val item = recents.getJSONObject(index)
-            val raw = item.optString("path").ifBlank { item.optString("id") }
-            if (raw.isBlank()) continue
-            val uri = Uri.parse(raw)
-            if (!hasPermission(uri)) continue
-            out.putIfAbsent(raw, uri)
-        }
-        val last = prefs.getString(KEY_URI, "").orEmpty()
-        if (last.isNotBlank()) {
-            val uri = Uri.parse(last)
-            if (hasPermission(uri)) out.putIfAbsent(last, uri)
-        }
-        return out.values.toList()
-    }
-
-    private fun collectSearch(dir: DocumentFile, prefix: String, out: MutableList<SearchPlate>) {
-        val children = dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }
-        for (child in children) {
-            val name = child.name ?: continue
-            if (child.isDirectory) {
-                if (skipDir(name)) continue
-                val next = if (prefix.isEmpty()) name else "$prefix/$name"
-                collectSearch(child, next, out)
-                continue
-            }
-            if (!isImage(name)) continue
-            val rel = if (prefix.isEmpty()) name else "$prefix/$name"
-            val year = Calendar.getInstance().apply { timeInMillis = child.lastModified() }.get(Calendar.YEAR)
-            out += SearchPlate(rel, name, year, child.uri, mimeFor(name))
-        }
-    }
-
     private fun skipDir(name: String): Boolean {
         return name.equals("blockchain", ignoreCase = true) || name.equals("xrp", ignoreCase = true)
     }
@@ -516,6 +375,7 @@ class CatalogStore(private val context: Context) {
             .put("ok", true)
             .put("catalogAddress", catalogEthAddress())
             .put("count", plates.length())
+            .put("standard", ETH_STANDARD)
             .put("plates", plates)
     }
 
@@ -575,6 +435,7 @@ class CatalogStore(private val context: Context) {
             .put("imageHash", toHex(imageHash))
             .put("encodedAt", java.time.Instant.now().toString().take(19))
             .put("tx", JSONObject().put("from", catalog).put("to", address).put("data", "0x" + toHex(imageHash).lowercase()))
+        attachNft(cert, imageHash)
         val vault = File(ethVaultDir(), vaultName(address))
         vault.writeBytes(plain)
         rememberEthCertificate(cert)
@@ -610,16 +471,36 @@ class CatalogStore(private val context: Context) {
             located.put("pointer", cert.optString("pointer", located.optString("pointer")))
             located.put("catalogAddress", cert.optString("catalogAddress", catalogEthAddress()))
             located.put("imageHash", cert.optString("imageHash"))
+            located.put("tokenId", cert.optString("tokenId"))
+            located.put("tokenURI", cert.optString("tokenURI").ifBlank { nftTokenUri(located.optString("address")) })
+            located.put("standard", cert.optString("standard").ifBlank { ETH_STANDARD })
+            located.put("contract", cert.optString("contract").ifBlank { located.optString("catalogAddress") })
+            located.put("nft", cert.optJSONObject("nft") ?: nftMetadata(cert))
         }
-        val title = cert?.optString("title")?.ifBlank { "ETH plate" } ?: "ETH plate"
+        val title = cert?.optString("title")?.ifBlank { "ETH NFT" } ?: "ETH NFT"
         located.put("certificate", cert ?: JSONObject())
         located.put("title", title)
         located.put("file", cert?.optString("file") ?: "plate")
         located.put("mime", cert?.optString("mime") ?: "application/octet-stream")
         located.put("src", if (decoded != null) "/media/eth/" + located.optString("address") else "")
         located.put("decoded", decoded != null)
-        located.put("search", shardSearchQuery(located, cert))
         return located
+    }
+
+    fun nftResponse(address: String): WebResourceResponse {
+        val cert = lookupEthCertificate(address) ?: return notFound()
+        val source = cert.optJSONObject("nft") ?: nftMetadata(cert)
+        val meta = JSONObject(source.toString())
+        return json(
+            meta
+                .put("ok", true)
+                .put("standard", cert.optString("standard").ifBlank { ETH_STANDARD })
+                .put("tokenId", cert.optString("tokenId").ifBlank { meta.optString("token_id") })
+                .put("tokenURI", cert.optString("tokenURI").ifBlank { nftTokenUri(cert.optString("address")) })
+                .put("contract", cert.optString("contract").ifBlank { cert.optString("catalogAddress") })
+                .put("address", cert.optString("address"))
+                .put("pointer", cert.optString("pointer")),
+        )
     }
 
     fun ethMediaResponse(address: String): WebResourceResponse {
@@ -670,6 +551,41 @@ class CatalogStore(private val context: Context) {
         return "$ETH_PREFIX$shard/$address"
     }
 
+    private fun tokenIdFromHash(imageHash: ByteArray): String {
+        return "0x" + toHex(imageHash).lowercase(Locale.US)
+    }
+
+    private fun nftTokenUri(address: String): String {
+        return "/api/eth/nft/" + address.ifBlank { normalizeAddress(address) }
+    }
+
+    private fun nftMetadata(cert: JSONObject): JSONObject {
+        val address = cert.optString("address")
+        val attrs = JSONArray()
+            .put(JSONObject().put("trait_type", "Shard").put("value", cert.opt("shard")))
+            .put(JSONObject().put("trait_type", "Catalog").put("value", cert.optString("catalogAddress")))
+            .put(JSONObject().put("trait_type", "File").put("value", cert.optString("file").ifBlank { "plate" }))
+        return JSONObject()
+            .put("name", cert.optString("title").ifBlank { "Plate" })
+            .put("description", "Aperture plate attached as an ERC-721 NFT on Ethereum shard ${cert.opt("shard")}.")
+            .put("image", if (address.isBlank()) "" else "/media/eth/$address")
+            .put("external_url", cert.optString("pointer"))
+            .put("background_color", "1C5FA8")
+            .put("attributes", attrs)
+            .put("token_id", cert.optString("tokenId"))
+    }
+
+    private fun attachNft(cert: JSONObject, imageHash: ByteArray): JSONObject {
+        val address = cert.optString("address")
+        val catalog = cert.optString("catalogAddress").ifBlank { catalogEthAddress() }
+        cert.put("standard", ETH_STANDARD)
+        cert.put("tokenId", tokenIdFromHash(imageHash))
+        cert.put("tokenURI", nftTokenUri(address))
+        cert.put("contract", catalog)
+        cert.put("nft", nftMetadata(cert))
+        return cert
+    }
+
     private fun parsePointer(code: String): JSONObject? {
         var raw = code.trim()
         if (raw.lowercase().startsWith(ETH_PREFIX)) raw = raw.substring(ETH_PREFIX.length)
@@ -713,14 +629,6 @@ class CatalogStore(private val context: Context) {
         if (name == ".eth") return null
         val file = File(ethVaultDir(), name)
         return if (file.isFile) file.readBytes() else null
-    }
-
-    private fun shardSearchQuery(located: JSONObject, cert: JSONObject?): String {
-        val title = cert?.optString("title").orEmpty().ifBlank { located.optString("title") }
-        if (title.isNotBlank() && title.lowercase() !in setOf("plate", "eth plate", "ethereum plate")) return title
-        val file = cert?.optString("file").orEmpty().substringBeforeLast('.').trim()
-        if (file.isNotBlank() && file.lowercase() != "plate") return file
-        return located.optString("address")
     }
 
     private fun rememberEthCertificate(cert: JSONObject) {
@@ -781,25 +689,6 @@ class CatalogStore(private val context: Context) {
         } catch (_: Exception) {
             null
         }
-    }
-
-    private fun readUriBytesLimited(uri: Uri, max: Int = ETH_MAX_PLATE): ByteArray? {
-        return try {
-            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
-                if (afd.length == 0L || afd.length > max) return null
-            }
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-            if (bytes.isEmpty() || bytes.size > max) null else bytes
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun normalizeImageHash(value: String): String {
-        val hex = value.trim().removePrefix("0x").removePrefix("0X")
-            .filter { it in "0123456789abcdefABCDEF" }
-            .uppercase(Locale.US)
-        return if (hex.length == 64) hex else ""
     }
 
     private fun hasPermission(uri: Uri): Boolean {
@@ -999,10 +888,9 @@ class CatalogStore(private val context: Context) {
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
         private const val ETH_MAX_PLATE = 25 * 1024 * 1024
-        private const val SEARCH_HIT_LIMIT = 40
-        private const val SEARCH_HASH_FILE_LIMIT = 200
         private const val ETH_SHARD_COUNT = 64
         private const val ETH_PREFIX = "eths:"
+        private const val ETH_STANDARD = "erc721"
         private val ETH_CATALOG = "eth-catalog".toByteArray(StandardCharsets.UTF_8)
         private val ETH_PLATE = "eth-plate".toByteArray(StandardCharsets.UTF_8)
         private val ETH_SHARD = "eth-shard".toByteArray(StandardCharsets.UTF_8)
