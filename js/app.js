@@ -1,7 +1,7 @@
 import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
 import * as cache from "./data.js";
 import * as theme from "./theme.js";
-import * as xrp from "./xrp.js";
+import * as eth from "./eth.js";
 
 theme.bootSkin();
 
@@ -74,17 +74,17 @@ const els = {
   postFill: document.getElementById("postFill"),
   postSend: document.getElementById("postSend"),
   themeBtn: document.getElementById("themeBtn"),
-  xrpBtn: document.getElementById("xrpBtn"),
-  xrpBar: document.getElementById("xrpBar"),
-  xrpCopy: document.getElementById("xrpCopy"),
-  xrpLedger: document.getElementById("xrpLedger"),
-  xrpStatus: document.getElementById("xrpStatus"),
-  xrpCatalogAddress: document.getElementById("xrpCatalogAddress"),
-  xrpList: document.getElementById("xrpList"),
-  xrpSpotInput: document.getElementById("xrpSpotInput"),
-  xrpSpotReadout: document.getElementById("xrpSpotReadout"),
-  xrpTrack: document.getElementById("xrpTrack"),
-  xrpFill: document.getElementById("xrpFill"),
+  ethBtn: document.getElementById("ethBtn"),
+  ethBar: document.getElementById("ethBar"),
+  ethCopy: document.getElementById("ethCopy"),
+  ethShard: document.getElementById("ethShard"),
+  ethStatus: document.getElementById("ethStatus"),
+  ethCatalogAddress: document.getElementById("ethCatalogAddress"),
+  ethList: document.getElementById("ethList"),
+  ethPointerInput: document.getElementById("ethPointerInput"),
+  ethPointerReadout: document.getElementById("ethPointerReadout"),
+  ethTrack: document.getElementById("ethTrack"),
+  ethFill: document.getElementById("ethFill"),
   skinEditor: document.getElementById("skinEditor"),
   skinSwatches: document.getElementById("skinSwatches"),
   skinStatus: document.getElementById("skinStatus"),
@@ -99,7 +99,7 @@ let downloadTimer = 0;
 let recentSlideTimer = 0;
 let downloadBusy = false;
 let postBusy = false;
-let xrpBusy = false;
+let ethBusy = false;
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 
@@ -146,7 +146,7 @@ function visiblePhotos() {
     const catOk = state.filter === "all" || photo.category === state.filter;
     if (!catOk) return false;
     if (!q) return true;
-    return [photo.title, photo.location, photo.photographer, photo.category]
+    return [photo.title, photo.location, photo.photographer, photo.category, photo.id]
       .join(" ")
       .toLowerCase()
       .includes(q);
@@ -560,7 +560,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> encode onto XRP`;
+      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> encode onto shard`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -602,7 +602,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · <kbd>X</kbd> encode onto XRP · <kbd>T</kbd> skin";
+    hint.innerHTML = "Open a folder · <kbd>X</kbd> encode onto shard · <kbd>T</kbd> skin";
   }
 }
 
@@ -1039,116 +1039,112 @@ function currentPlate() {
   return state.photos.find((photo) => photo.featured) || state.photos[0] || null;
 }
 
-function setXrpProgress(pct, label) {
-  if (els.xrpTrack) els.xrpTrack.hidden = pct <= 0;
-  if (els.xrpFill) els.xrpFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  if (label && els.xrpStatus) els.xrpStatus.textContent = label;
-  if (els.xrpBar) els.xrpBar.classList.toggle("is-busy", xrpBusy);
-  if (els.xrpCopy) els.xrpCopy.textContent = xrpBusy ? "Sealing onto XRP…" : "Encode onto XRP";
+function setEthProgress(pct, label) {
+  if (els.ethTrack) els.ethTrack.hidden = pct <= 0;
+  if (els.ethFill) els.ethFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (label && els.ethStatus) els.ethStatus.textContent = label;
+  if (els.ethBar) els.ethBar.classList.toggle("is-busy", ethBusy);
+  if (els.ethCopy) els.ethCopy.textContent = ethBusy ? "Writing shard…" : "Encode onto shard";
 }
 
-async function fetchXrpLedger() {
+async function fetchEthShard() {
   try {
-    const response = await fetch("/api/xrp", { headers: { Accept: "application/json" } });
+    const response = await fetch("/api/eth", { headers: { Accept: "application/json" } });
     if (response.ok) return await response.json();
   } catch {
     /* static host */
   }
-  if (window.ApertureAndroid?.xrpLedger) {
+  if (window.ApertureAndroid?.ethShard) {
     try {
-      return JSON.parse(window.ApertureAndroid.xrpLedger() || "{}");
+      return JSON.parse(window.ApertureAndroid.ethShard() || "{}");
     } catch {
       /* ignore */
     }
   }
-  const local = xrp.loadLedger();
+  const local = eth.loadLedger();
   return { ok: true, plates: local.plates || [], catalogAddress: local.catalogAddress || "", count: (local.plates || []).length };
 }
 
-function paintXrpLedger(listing) {
+function paintEthShard(listing) {
   const plates = listing?.plates || [];
   const address = listing?.catalogAddress || "";
-  if (els.xrpCatalogAddress) {
-    els.xrpCatalogAddress.hidden = !address;
-    els.xrpCatalogAddress.textContent = address ? `Catalog ${address}` : "";
+  if (els.ethCatalogAddress) {
+    els.ethCatalogAddress.hidden = !address;
+    els.ethCatalogAddress.textContent = address ? `Catalog ${address}` : "";
   }
-  if (els.xrpList) {
-    els.xrpList.innerHTML = plates
+  if (els.ethList) {
+    els.ethList.innerHTML = plates
       .slice(0, 12)
       .map(
         (item) => `
       <li>
-        <button class="xrp-plate" type="button" data-spot="${escapeHtml(item.spot || "")}" data-address="${escapeHtml(item.address || "")}">
+        <button class="eth-plate" type="button" data-pointer="${escapeHtml(item.pointer || item.address || "")}" data-address="${escapeHtml(item.address || "")}">
           <strong>${escapeHtml(item.title || item.file || "Plate")}</strong>
-          <span>${escapeHtml(item.address || "")}</span>
-          <span>${escapeHtml(item.spot || shortAddress(item.imageHash || ""))}</span>
+          <span>Shard ${escapeHtml(String(item.shard ?? "—"))} · ${escapeHtml(item.address || "")}</span>
+          <span>${escapeHtml(item.pointer || "")}</span>
         </button>
       </li>`
       )
       .join("");
   }
-  if (els.xrpStatus && !xrpBusy) {
-    els.xrpStatus.textContent = plates.length
-      ? `${plates.length} plate${plates.length === 1 ? "" : "s"} encoded onto XRP`
-      : "Seal plates and write their fingerprints as XRPL memos.";
+  if (els.ethStatus && !ethBusy) {
+    els.ethStatus.textContent = plates.length
+      ? `${plates.length} plate${plates.length === 1 ? "" : "s"} on the Ethereum shard`
+      : "Place plates onto an Ethereum shard and open them from a 0x pointer.";
   }
 }
 
-async function openXrpLedger() {
-  if (!els.xrpLedger) return;
-  els.xrpLedger.hidden = false;
-  paintXrpLedger(await fetchXrpLedger());
+async function openEthOverlay() {
+  if (!els.ethShard) return;
+  els.ethShard.hidden = false;
+  paintEthShard(await fetchEthShard());
 }
 
-function closeXrpLedger() {
-  if (els.xrpLedger) els.xrpLedger.hidden = true;
+function closeEthOverlay() {
+  if (els.ethShard) els.ethShard.hidden = true;
 }
 
-async function encodeBytesOnXrp(bytes, title, filename, mime) {
-  if (window.ApertureAndroid?.xrpEncodeBytes) {
-    const hex = xrp.toHex(bytes);
-    return JSON.parse(window.ApertureAndroid.xrpEncodeBytes(hex, filename, title, mime || "") || "{}");
-  }
+async function encodeBytesOnEth(bytes, title, filename, mime) {
   try {
     const body = new FormData();
     body.append("title", title);
     body.append("plate", new Blob([bytes], { type: mime || "application/octet-stream" }), filename);
-    const response = await fetch("/api/xrp", { method: "POST", body });
+    const response = await fetch("/api/eth", { method: "POST", body });
     if (response.ok) return await response.json();
   } catch {
     /* encode locally */
   }
-  const encoded = await xrp.encodePlate(bytes, { title, file: filename, mime }, xrp.loadSecret());
-  xrp.rememberCertificate(encoded.certificate);
+  const encoded = await eth.encodePlate(bytes, { title, file: filename, mime }, eth.loadSecret());
+  eth.rememberCertificate(encoded.certificate);
   return encoded;
 }
 
-async function encodePhotoOnXrp(photo, onProgress) {
+async function encodePhotoOnEth(photo, onProgress) {
   const filename = downloadFilename(photo);
   const title = photo.title || filename;
-  if (window.ApertureAndroid?.xrpEncode) {
+  if (window.ApertureAndroid?.ethEncode) {
     onProgress?.(40);
-    return JSON.parse(window.ApertureAndroid.xrpEncode(photo.src, filename, title) || "{}");
+    return JSON.parse(window.ApertureAndroid.ethEncode(photo.src, filename, title) || "{}");
   }
   const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  return encodeBytesOnXrp(bytes, title, filename, blob.type);
+  return encodeBytesOnEth(bytes, title, filename, blob.type);
 }
 
-async function encodeCatalogOnXrp() {
-  if (xrpBusy || !state.photos.length) return;
-  xrpBusy = true;
-  setXrpProgress(4, "Sealing plates…");
+async function encodeCatalogOnEth() {
+  if (ethBusy || !state.photos.length) return;
+  ethBusy = true;
+  setEthProgress(4, "Writing shard…");
   try {
-    if (window.ApertureAndroid?.xrpEncodeFolder) {
-      const listing = JSON.parse(window.ApertureAndroid.xrpEncodeFolder() || "{}");
-      paintXrpLedger(listing);
-      setXrpProgress(100, listing.count ? `${listing.count} plates on XRP` : "Encoded onto XRP");
+    if (window.ApertureAndroid?.ethEncodeFolder) {
+      const listing = JSON.parse(window.ApertureAndroid.ethEncodeFolder() || "{}");
+      paintEthShard(listing);
+      setEthProgress(100, listing.count ? `${listing.count} plates on shard` : "Encoded onto shard");
       return;
     }
     if (!window.ApertureAndroid) {
       try {
-        const response = await fetch("/api/xrp", {
+        const response = await fetch("/api/eth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: state.folderPath }),
@@ -1156,8 +1152,8 @@ async function encodeCatalogOnXrp() {
         if (response.ok) {
           const listing = await response.json();
           if (listing.encoded || listing.count) {
-            paintXrpLedger(listing);
-            setXrpProgress(100, `${listing.count || listing.encoded} plates on XRP`);
+            paintEthShard(listing);
+            setEthProgress(100, `${listing.count || listing.encoded} plates on shard`);
             return;
           }
         }
@@ -1167,47 +1163,47 @@ async function encodeCatalogOnXrp() {
     }
     const photos = state.photos.slice(0, 80);
     let encoded = 0;
-    let listing = await fetchXrpLedger();
+    let listing = await fetchEthShard();
     for (let i = 0; i < photos.length; i += 1) {
-      setXrpProgress(Math.round(((i + 1) / photos.length) * 92), `Sealing ${i + 1} of ${photos.length}…`);
-      const result = await encodePhotoOnXrp(photos[i]);
+      setEthProgress(Math.round(((i + 1) / photos.length) * 92), `Sharding ${i + 1} of ${photos.length}…`);
+      const result = await encodePhotoOnEth(photos[i]);
       if (result?.ok !== false && (result.certificate || result.address)) encoded += 1;
     }
-    listing = await fetchXrpLedger();
-    paintXrpLedger(listing);
-    setXrpProgress(100, encoded ? `${listing.count || encoded} plates on XRP` : "Could not encode");
+    listing = await fetchEthShard();
+    paintEthShard(listing);
+    setEthProgress(100, encoded ? `${listing.count || encoded} plates on shard` : "Could not encode");
   } catch {
-    setXrpProgress(0, "Could not encode onto XRP");
+    setEthProgress(0, "Could not encode onto shard");
   } finally {
-    xrpBusy = false;
-    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
-    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+    ethBusy = false;
+    if (els.ethBar) els.ethBar.classList.remove("is-busy");
+    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
   }
 }
 
-async function encodeCurrentOnXrp() {
+async function encodeCurrentOnEth() {
   const photo = currentPlate();
-  if (!photo || xrpBusy) return;
-  xrpBusy = true;
-  setXrpProgress(8, `Sealing ${photo.title || "plate"}…`);
+  if (!photo || ethBusy) return;
+  ethBusy = true;
+  setEthProgress(8, `Sharding ${photo.title || "plate"}…`);
   try {
-    const result = await encodePhotoOnXrp(photo, (pct) => setXrpProgress(Math.max(10, pct), "Reading plate…"));
-    if (result?.spot && els.xrpSpotInput) els.xrpSpotInput.value = result.spot;
-    paintXrpLedger(await fetchXrpLedger());
-    setXrpProgress(100, result?.address ? `On XRP · ${shortAddress(result.address)}` : "Encoded onto XRP");
+    const result = await encodePhotoOnEth(photo, (pct) => setEthProgress(Math.max(10, pct), "Reading plate…"));
+    if (result?.pointer && els.ethPointerInput) els.ethPointerInput.value = result.pointer;
+    paintEthShard(await fetchEthShard());
+    setEthProgress(100, result?.address ? `Shard ${result.shard} · ${shortAddress(result.address)}` : "Encoded onto shard");
   } catch {
-    setXrpProgress(0, "Could not encode this plate");
+    setEthProgress(0, "Could not encode this plate");
   } finally {
-    xrpBusy = false;
-    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
-    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+    ethBusy = false;
+    if (els.ethBar) els.ethBar.classList.remove("is-busy");
+    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
   }
 }
 
-function showSpotReadout(text) {
-  if (!els.xrpSpotReadout) return;
-  els.xrpSpotReadout.hidden = !text;
-  els.xrpSpotReadout.textContent = text || "";
+function showPointerReadout(text) {
+  if (!els.ethPointerReadout) return;
+  els.ethPointerReadout.hidden = !text;
+  els.ethPointerReadout.textContent = text || "";
 }
 
 function insertDecodedPlate(photo) {
@@ -1217,8 +1213,8 @@ function insertDecodedPlate(photo) {
     item.featured = index === 0;
   });
   state.photos = next;
-  if (!state.categories.some((cat) => cat.id === "xrp")) {
-    state.categories = [...state.categories, { id: "xrp", label: "XRP" }];
+  if (!state.categories.some((cat) => cat.id === "eth")) {
+    state.categories = [...state.categories, { id: "eth", label: "ETH" }];
   }
   renderFilters();
   renderHero();
@@ -1226,26 +1222,42 @@ function insertDecodedPlate(photo) {
   openViewer(photo.id);
 }
 
-async function decodeXrpSpot(code) {
-  const spot = String(code || els.xrpSpotInput?.value || "").trim();
-  if (!spot) {
-    setXrpProgress(0, "Paste a spot code to decode");
+function initializeShardSearch(located) {
+  const query = String(located?.search || located?.title || located?.address || "").trim();
+  closeEthOverlay();
+  state.query = query;
+  state.filter = "all";
+  if (els.search) {
+    els.search.value = query;
+    els.search.focus();
+    els.search.select();
+  }
+  renderFilters();
+  renderHero();
+  renderCatalog();
+  setEthProgress(100, query ? `Searching catalog for ${query}` : "Shard matched — searching catalog");
+}
+
+async function openEthShard(code) {
+  const pointer = String(code || els.ethPointerInput?.value || "").trim();
+  if (!pointer) {
+    setEthProgress(0, "Paste a shard pointer to open");
     return;
   }
-  if (els.xrpSpotInput) els.xrpSpotInput.value = spot;
-  xrpBusy = true;
-  setXrpProgress(12, "Reading ledger spot…");
+  if (els.ethPointerInput) els.ethPointerInput.value = pointer;
+  ethBusy = true;
+  setEthProgress(12, "Reading Ethereum shard…");
   try {
     let located = null;
-    if (window.ApertureAndroid?.xrpDecode) {
-      located = JSON.parse(window.ApertureAndroid.xrpDecode(spot) || "{}");
+    if (window.ApertureAndroid?.ethOpen) {
+      located = JSON.parse(window.ApertureAndroid.ethOpen(pointer) || "{}");
     }
     if (!located?.ok) {
       try {
-        const response = await fetch("/api/xrp/decode", {
+        const response = await fetch("/api/eth/open", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spot }),
+          body: JSON.stringify({ pointer }),
         });
         if (response.ok) located = await response.json();
       } catch {
@@ -1254,7 +1266,7 @@ async function decodeXrpSpot(code) {
     }
     if (!located?.ok) {
       try {
-        const response = await fetch(`/api/xrp/spot?c=${encodeURIComponent(spot)}`, {
+        const response = await fetch(`/api/eth/shard?c=${encodeURIComponent(pointer)}`, {
           headers: { Accept: "application/json" },
         });
         if (response.ok) located = await response.json();
@@ -1263,46 +1275,51 @@ async function decodeXrpSpot(code) {
       }
     }
     if (!located?.ok) {
-      located = await xrp.decodeSpot(spot, xrp.loadSecret());
+      located = eth.parsePointer(pointer);
       if (located?.ok) {
-        const envelope = xrp.loadEnvelope(located.address);
-        if (envelope) {
-          const unlocked = await xrp.decodePlate(envelope, xrp.loadSecret());
-          if (unlocked) {
-            const blob = new Blob([unlocked.plain], { type: "application/octet-stream" });
-            const src = URL.createObjectURL(blob);
-            state.blobUrls.push(src);
-            located.src = src;
-            located.decoded = true;
-          }
-        }
-        const cert = (xrp.loadLedger().plates || []).find(
-          (item) => item.address === located.address || item.imageHash === located.imageHash
+        const cert = (eth.loadLedger().plates || []).find(
+          (item) => eth.normalizeAddress(item.address) === located.address || item.pointer === pointer
         );
-        located.certificate = cert || {};
-        located.title = cert?.title || "XRP plate";
+        if (cert && located.shard != null && Number(cert.shard) !== located.shard) located = { ok: false };
+        else if (cert) {
+          located.certificate = cert;
+          located.title = cert.title || "ETH plate";
+          located.shard = cert.shard;
+          located.pointer = cert.pointer || located.pointer;
+          located.catalogAddress = cert.catalogAddress || "";
+          located.imageHash = cert.imageHash || "";
+          located.search = cert.title || cert.file || located.address;
+        }
+        const bytes = eth.loadBytes(located.address);
+        if (bytes) {
+          const src = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+          state.blobUrls.push(src);
+          located.src = src;
+          located.decoded = true;
+        }
+        if (!cert && !located.decoded) located = { ok: false };
       }
     }
     if (!located?.ok) {
-      setXrpProgress(0, "Could not decode that spot");
-      showSpotReadout("");
+      setEthProgress(0, "Could not open that shard");
+      showPointerReadout("");
       return;
     }
-    showSpotReadout(`Account ${located.catalogAddress || located.account} → ${located.address || located.destination}`);
-    setXrpProgress(70, "Opening plate from ledger spot…");
+    const shardLabel = located.shard == null ? "shard" : `shard ${located.shard}`;
+    showPointerReadout(`${shardLabel} · ${located.address}`);
     let src = located.src || "";
-    if (!src && located.address) src = `/media/xrp/${located.address}`;
+    if (!src && located.decoded && located.address) src = `/media/eth/${located.address}`;
     if (!src) {
-      setXrpProgress(100, `Spot ${shortAddress(located.address)} — sealed image not on this device`);
+      initializeShardSearch(located);
       return;
     }
     const photo = {
-      id: `xrp/${located.address}`,
-      title: located.title || located.certificate?.title || "XRP plate",
-      photographer: "XRP cipher",
+      id: `eth/${located.address}`,
+      title: located.title || located.certificate?.title || "ETH plate",
+      photographer: "Ethereum shard",
       location: located.address,
       year: new Date().getFullYear(),
-      category: "xrp",
+      category: "eth",
       src,
       thumb: src,
       hero: src,
@@ -1310,28 +1327,28 @@ async function decodeXrpSpot(code) {
       featured: true,
     };
     insertDecodedPlate(photo);
-    closeXrpLedger();
-    setXrpProgress(100, `Decoded ${shortAddress(located.address)}`);
+    closeEthOverlay();
+    setEthProgress(100, `Opened ${shortAddress(located.address)}`);
   } catch {
-    setXrpProgress(0, "Could not decode that spot");
+    setEthProgress(0, "Could not open that shard");
   } finally {
-    xrpBusy = false;
-    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
-    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+    ethBusy = false;
+    if (els.ethBar) els.ethBar.classList.remove("is-busy");
+    if (els.ethCopy) els.ethCopy.textContent = "Encode onto shard";
   }
 }
 
-function downloadXrpLedger() {
+function downloadEthShard() {
   void (async () => {
-    const listing = await fetchXrpLedger();
+    const listing = await fetchEthShard();
     const blob = new Blob([JSON.stringify(listing, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Aperture-xrp-${slug(state.folderName || "catalog")}.json`;
+    a.download = `Aperture-eth-${slug(state.folderName || "catalog")}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-    if (window.ApertureAndroid?.shareXrp) window.ApertureAndroid.shareXrp();
+    if (window.ApertureAndroid?.shareEth) window.ApertureAndroid.shareEth();
   })();
 }
 
@@ -1360,14 +1377,14 @@ function onKey(event) {
     }
     return;
   }
-  if (els.xrpLedger && !els.xrpLedger.hidden) {
+  if (els.ethShard && !els.ethShard.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
-      closeXrpLedger();
+      closeEthOverlay();
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      void decodeXrpSpot();
+      void openEthShard();
     }
     return;
   }
@@ -1381,8 +1398,8 @@ function onKey(event) {
   if (event.key === "x" || event.key === "X") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
-    if (els.xrpLedger?.hidden === false) closeXrpLedger();
-    else void openXrpLedger();
+    if (els.ethShard?.hidden === false) closeEthOverlay();
+    else void openEthOverlay();
     return;
   }
   if (event.key === "o" || event.key === "O") {
@@ -1867,22 +1884,22 @@ async function wire() {
     if (event.target === els.postForm) closePostForm();
   });
   els.themeBtn?.addEventListener("click", openSkinEditor);
-  els.xrpBtn?.addEventListener("click", () => void openXrpLedger());
-  els.xrpBar?.addEventListener("click", () => void encodeCatalogOnXrp());
-  document.getElementById("xrpEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnXrp());
-  document.getElementById("xrpEncodePlate")?.addEventListener("click", () => void encodeCurrentOnXrp());
-  document.getElementById("xrpDecode")?.addEventListener("click", () => void decodeXrpSpot());
-  document.getElementById("xrpDownload")?.addEventListener("click", downloadXrpLedger);
-  document.getElementById("xrpClose")?.addEventListener("click", closeXrpLedger);
-  els.xrpList?.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-spot]");
+  els.ethBtn?.addEventListener("click", () => void openEthOverlay());
+  els.ethBar?.addEventListener("click", () => void encodeCatalogOnEth());
+  document.getElementById("ethEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnEth());
+  document.getElementById("ethEncodePlate")?.addEventListener("click", () => void encodeCurrentOnEth());
+  document.getElementById("ethOpen")?.addEventListener("click", () => void openEthShard());
+  document.getElementById("ethDownload")?.addEventListener("click", downloadEthShard);
+  document.getElementById("ethClose")?.addEventListener("click", closeEthOverlay);
+  els.ethList?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-pointer]");
     if (!btn) return;
-    const spot = btn.dataset.spot || "";
-    if (els.xrpSpotInput) els.xrpSpotInput.value = spot;
-    if (spot) void decodeXrpSpot(spot);
+    const pointer = btn.dataset.pointer || "";
+    if (els.ethPointerInput) els.ethPointerInput.value = pointer;
+    if (pointer) void openEthShard(pointer);
   });
-  els.xrpLedger?.addEventListener("click", (event) => {
-    if (event.target === els.xrpLedger) closeXrpLedger();
+  els.ethShard?.addEventListener("click", (event) => {
+    if (event.target === els.ethShard) closeEthOverlay();
   });
   document.getElementById("skinClose")?.addEventListener("click", closeSkinEditor);
   document.getElementById("skinReset")?.addEventListener("click", () => {
@@ -2008,8 +2025,8 @@ function apertureHandleBack() {
     closeSkinEditor();
     return true;
   }
-  if (els.xrpLedger && !els.xrpLedger.hidden) {
-    closeXrpLedger();
+  if (els.ethShard && !els.ethShard.hidden) {
+    closeEthOverlay();
     return true;
   }
   if (els.postForm && !els.postForm.hidden) {

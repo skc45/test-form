@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import json
 import mimetypes
 import os
@@ -75,7 +74,7 @@ def session_file() -> Path:
     return cache_home() / "session.json"
 
 
-SKIP_DIR_NAMES = {"blockchain"}
+SKIP_DIR_NAMES = {"blockchain", "xrp"}
 
 
 def in_skip_dir(root: Path, path: Path) -> bool:
@@ -344,37 +343,29 @@ def save_skin(data) -> dict:
     return skin
 
 
-XRP_MAGIC = b"APXR"
-XRP_VERSION = 1
-XRP_NONCE_SIZE = 16
-XRP_HASH_SIZE = 32
-XRP_CIPHER_LABEL = b"aperture-xrp-cipher-v1"
-XRP_MEMO_TYPE = "aperture/xrp"
-XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
-XRP_MAX_PLATE = 25 * 1024 * 1024
-SPOT_MAGIC = b"APXS"
-SPOT_VERSION = 1
-SPOT_LABEL = b"aperture-xrp-spot-v1"
-SPOT_PREFIX = "apxs1:"
-SPOT_PAYLOAD = 72
+ETH_VERSION = 1
+ETH_SHARD_COUNT = 64
+ETH_PREFIX = "eths:"
+ETH_MAX_PLATE = 25 * 1024 * 1024
+ETH_LABEL = b"aperture-eth-shard-v1"
 
 
-def xrp_secret_file() -> Path:
-    return cache_home() / "xrp-secret"
+def eth_secret_file() -> Path:
+    return cache_home() / "eth-secret"
 
 
-def xrp_ledger_file() -> Path:
-    return cache_home() / "xrp.json"
+def eth_ledger_file() -> Path:
+    return cache_home() / "eth.json"
 
 
-def xrp_vault_dir() -> Path:
-    path = cache_home() / "xrp"
+def eth_vault_dir() -> Path:
+    path = cache_home() / "eth"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def load_xrp_secret() -> bytes:
-    path = xrp_secret_file()
+def load_eth_secret() -> bytes:
+    path = eth_secret_file()
     if path.is_file():
         raw = path.read_bytes().strip()
         try:
@@ -403,262 +394,184 @@ def to_hex(data: bytes) -> str:
     return data.hex().upper()
 
 
-def xor_seal(plain: bytes, key: bytes) -> bytes:
-    if not key:
-        return plain
-    return bytes(value ^ key[index % len(key)] for index, value in enumerate(plain))
-
-
-def b58encode(data: bytes, alphabet: str = XRP_ALPHABET) -> str:
-    zeros = 0
-    for byte in data:
-        if byte == 0:
-            zeros += 1
-        else:
-            break
-    number = int.from_bytes(data, "big")
+def checksum_address(payload20: bytes) -> str:
+    hex_lower = payload20[:20].hex()
+    digest = sha256_bytes(hex_lower.encode("ascii"))
     chars: list[str] = []
-    while number:
-        number, rem = divmod(number, 58)
-        chars.append(alphabet[rem])
-    return alphabet[0] * zeros + "".join(reversed(chars or [alphabet[0]]))
+    for index, ch in enumerate(hex_lower):
+        nibble = (digest[index >> 1] >> (0 if index % 2 else 4)) & 0x0F
+        chars.append(ch.upper() if ch.isalpha() and nibble >= 8 else ch)
+    return "0x" + "".join(chars)
 
 
-def classic_address(payload20: bytes) -> str:
-    versioned = b"\x00" + payload20[:20]
-    check = sha256_bytes(sha256_bytes(versioned))[:4]
-    return b58encode(versioned + check)
+def normalize_address(value: str) -> str:
+    hex_lower = "".join(ch for ch in str(value or "").strip().removeprefix("0x").removeprefix("0X") if ch in "0123456789abcdefABCDEF").lower()
+    if len(hex_lower) != 40:
+        return ""
+    return "0x" + hex_lower
 
 
-def b58decode(text: str, alphabet: str = XRP_ALPHABET) -> bytes | None:
-    raw = str(text or "").strip()
+def catalog_address(secret: bytes | None = None) -> str:
+    payload = sha256_bytes(b"eth-catalog" + (secret if secret is not None else load_eth_secret()))[:20]
+    return checksum_address(payload)
+
+
+def plate_address(image_hash: bytes, secret: bytes) -> str:
+    payload = sha256_bytes(image_hash + b"eth-plate" + secret)[:20]
+    return checksum_address(payload)
+
+
+def shard_id(image_hash: bytes, secret: bytes) -> int:
+    digest = sha256_bytes(image_hash + b"eth-shard" + secret)
+    return ((digest[0] << 8) | digest[1]) % ETH_SHARD_COUNT
+
+
+def shard_pointer(shard: int, address: str) -> str:
+    return f"{ETH_PREFIX}{int(shard)}/{address}"
+
+
+def parse_pointer(code: str) -> dict | None:
+    raw = str(code or "").strip()
     if not raw:
         return None
-    zeros = 0
-    for ch in raw:
-        if ch == alphabet[0]:
-            zeros += 1
-        else:
-            break
-    number = 0
-    for ch in raw:
-        index = alphabet.find(ch)
-        if index < 0:
-            return None
-        number = number * 58 + index
-    body = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    return b"\x00" * zeros + body
-
-
-def account_id(address: str) -> bytes | None:
-    data = b58decode(address)
-    if not data or len(data) < 25:
+    if raw.lower().startswith(ETH_PREFIX):
+        raw = raw[len(ETH_PREFIX) :]
+    shard = None
+    address = raw
+    slash = raw.find("/")
+    if slash >= 0 and raw[:slash].isdigit():
+        shard = int(raw[:slash])
+        address = raw[slash + 1 :]
+    normalized = normalize_address(address)
+    if not normalized:
         return None
-    payload, check = data[:-4], data[-4:]
-    if sha256_bytes(sha256_bytes(payload))[:4] != check or payload[0] != 0 or len(payload) != 21:
+    if shard is not None and not 0 <= shard < ETH_SHARD_COUNT:
         return None
-    return payload[1:]
-
-
-def spot_key(secret: bytes) -> bytes:
-    return sha256_bytes(SPOT_LABEL + secret)
-
-
-def encode_spot(image_hash: bytes, secret: bytes | None = None) -> str:
-    secret = secret if secret is not None else load_xrp_secret()
-    dest = sha256_bytes(image_hash + b"xrpl-plate" + secret)[:20]
-    catalog = sha256_bytes(b"xrpl-catalog" + secret)[:20]
-    payload = dest + catalog + image_hash
-    nonce = os.urandom(XRP_NONCE_SIZE)
-    key = sha256_bytes(secret + nonce + SPOT_LABEL)
-    cipher = xor_seal(payload, key)
-    tag = hmac.new(spot_key(secret), nonce + cipher, hashlib.sha256).digest()
-    envelope = SPOT_MAGIC + bytes([SPOT_VERSION]) + nonce + tag + cipher
-    return SPOT_PREFIX + b58encode(envelope)
-
-
-def decode_spot(code: str, secret: bytes | None = None) -> dict | None:
-    raw = str(code or "").strip()
-    if raw.lower().startswith(SPOT_PREFIX):
-        raw = raw[len(SPOT_PREFIX) :]
-    packed = b58decode(raw)
-    header = 5 + XRP_NONCE_SIZE + XRP_HASH_SIZE
-    if not packed or len(packed) < header + SPOT_PAYLOAD:
-        return None
-    if packed[:4] != SPOT_MAGIC or packed[4] != SPOT_VERSION:
-        return None
-    secret = secret if secret is not None else load_xrp_secret()
-    nonce = packed[5 : 5 + XRP_NONCE_SIZE]
-    tag = packed[5 + XRP_NONCE_SIZE : header]
-    cipher = packed[header:]
-    expected = hmac.new(spot_key(secret), nonce + cipher, hashlib.sha256).digest()
-    if not hmac.compare_digest(expected, tag):
-        return None
-    key = sha256_bytes(secret + nonce + SPOT_LABEL)
-    payload = xor_seal(cipher, key)
-    if len(payload) < SPOT_PAYLOAD:
-        return None
-    dest_id, catalog_id, image_hash = payload[:20], payload[20:40], payload[40:72]
-    address = classic_address(dest_id)
-    catalog = classic_address(catalog_id)
     return {
         "ok": True,
-        "kind": "aperture-xrp-spot",
-        "ledger": "xrpl",
-        "address": address,
-        "catalogAddress": catalog,
-        "imageHash": to_hex(image_hash),
-        "account": catalog,
-        "destination": address,
-        "spot": SPOT_PREFIX + raw if not str(code or "").strip().lower().startswith(SPOT_PREFIX) else str(code).strip(),
+        "kind": "aperture-eth-shard",
+        "chain": "ethereum",
+        "shard": shard,
+        "address": normalized,
+        "pointer": normalized if shard is None else shard_pointer(shard, normalized),
     }
 
 
-def lookup_xrp_certificate(address: str = "", image_hash: str = "") -> dict | None:
+def vault_name(address: str) -> str:
+    return normalize_address(address).removeprefix("0x") + ".eth"
+
+
+def lookup_eth_certificate(address: str = "", image_hash: str = "") -> dict | None:
     digest = str(image_hash or "").upper()
-    for item in load_xrp_ledger().get("plates") or []:
+    wanted = normalize_address(address)
+    for item in load_eth_ledger().get("plates") or []:
         if not isinstance(item, dict):
             continue
-        if address and str(item.get("address") or "") == address:
+        if wanted and normalize_address(str(item.get("address") or "")) == wanted:
             return item
         if digest and str(item.get("imageHash") or "").upper() == digest:
             return item
     return None
 
 
-def open_xrp_vault(address: str) -> Path | None:
-    name = Path(str(address or "")).name
-    if not name:
+def open_eth_vault(address: str) -> Path | None:
+    name = vault_name(address)
+    if name == ".eth":
         return None
-    path = xrp_vault_dir() / f"{name}.apxr"
+    path = eth_vault_dir() / name
     return path if path.is_file() else None
 
 
-def resolve_spot(code: str) -> dict:
-    located = decode_spot(code)
+def shard_search_query(located: dict, cert: dict | None) -> str:
+    title = str((cert or {}).get("title") or located.get("title") or "").strip()
+    if title and title.lower() not in {"plate", "eth plate", "ethereum plate"}:
+        return title
+    filename = str((cert or {}).get("file") or "").rsplit(".", 1)[0].strip()
+    if filename and filename.lower() != "plate":
+        return filename
+    return str(located.get("address") or "")
+
+
+def resolve_shard(code: str) -> dict:
+    located = parse_pointer(code)
     if not located:
-        return {"ok": False, "error": "invalid spot"}
-    cert = lookup_xrp_certificate(located["address"], located["imageHash"])
-    vault = open_xrp_vault(located["address"])
-    plain = None
-    if vault:
-        unlocked = decode_plate(vault.read_bytes())
-        if unlocked:
-            plain = unlocked[1]
+        return {"ok": False, "error": "invalid shard"}
+    cert = lookup_eth_certificate(located["address"])
+    vault = open_eth_vault(located["address"])
+    if not cert and vault is None:
+        return {"ok": False, "error": "unknown shard"}
+    if cert and located.get("shard") is not None and int(cert.get("shard") or -1) != located["shard"]:
+        return {"ok": False, "error": "shard mismatch"}
+    if cert:
+        located["address"] = cert.get("address") or located["address"]
+        located["shard"] = cert.get("shard")
+        located["pointer"] = cert.get("pointer") or located["pointer"]
+        located["catalogAddress"] = cert.get("catalogAddress") or catalog_address()
+        located["imageHash"] = cert.get("imageHash") or ""
     located["certificate"] = cert or {}
-    located["title"] = (cert or {}).get("title") or "XRP plate"
+    located["title"] = (cert or {}).get("title") or "ETH plate"
     located["file"] = (cert or {}).get("file") or "plate"
     located["mime"] = (cert or {}).get("mime") or "application/octet-stream"
-    located["src"] = "/media/xrp/" + located["address"] if plain is not None else ""
-    located["decoded"] = plain is not None
+    located["src"] = "/media/eth/" + located["address"] if vault is not None else ""
+    located["decoded"] = vault is not None
+    located["search"] = shard_search_query(located, cert)
     return located
 
 
-def cipher_key(secret: bytes) -> bytes:
-    return sha256_bytes(XRP_CIPHER_LABEL + secret)
-
-
-def plate_address(image_hash: bytes, secret: bytes) -> str:
-    payload = sha256_bytes(image_hash + b"xrpl-plate" + secret)[:20]
-    return classic_address(payload)
-
-
-def catalog_address(secret: bytes | None = None) -> str:
-    payload = sha256_bytes(b"xrpl-catalog" + (secret if secret is not None else load_xrp_secret()))[:20]
-    return classic_address(payload)
-
-
-def certificate_json(cert: dict) -> str:
-    return json.dumps(cert, separators=(",", ":"), ensure_ascii=True, sort_keys=True)
-
-
-def memo_hex(text: str) -> str:
-    return to_hex(text.encode("utf-8"))
-
-
 def encode_plate(plain: bytes, title: str = "", filename: str = "plate", mime: str = "application/octet-stream") -> dict:
-    if not plain or len(plain) > XRP_MAX_PLATE:
+    if not plain or len(plain) > ETH_MAX_PLATE:
         return {"ok": False, "error": "invalid plate"}
-    secret = load_xrp_secret()
-    nonce = os.urandom(XRP_NONCE_SIZE)
+    secret = load_eth_secret()
     image_hash = sha256_bytes(plain)
-    key = sha256_bytes(secret + nonce + image_hash)
-    cipher = xor_seal(plain, key)
-    tag = hmac.new(cipher_key(secret), nonce + image_hash + cipher, hashlib.sha256).digest()
-    envelope = XRP_MAGIC + bytes([XRP_VERSION]) + nonce + image_hash + tag + cipher
     address = plate_address(image_hash, secret)
+    catalog = catalog_address(secret)
+    shard = shard_id(image_hash, secret)
+    pointer = shard_pointer(shard, address)
     cert = {
-        "v": 1,
-        "kind": "aperture-xrp",
-        "ledger": "xrpl",
+        "v": ETH_VERSION,
+        "kind": "aperture-eth-shard",
+        "chain": "ethereum",
+        "shard": shard,
+        "address": address,
+        "catalogAddress": catalog,
+        "pointer": pointer,
         "title": title or Path(filename).stem or "Plate",
         "file": Path(filename).name or "plate",
         "mime": mime or "application/octet-stream",
         "imageHash": to_hex(image_hash),
-        "cipherHash": to_hex(sha256_bytes(cipher)),
-        "address": address,
-        "tag": to_hex(tag),
         "encodedAt": datetime.now().isoformat(timespec="seconds"),
+        "tx": {"from": catalog, "to": address, "data": "0x" + image_hash.hex()},
     }
-    memo_data = memo_hex(certificate_json(cert))
-    catalog = catalog_address(secret)
-    cert["memoType"] = memo_hex(XRP_MEMO_TYPE)
-    cert["memoFormat"] = memo_hex("application/json")
-    cert["memoData"] = memo_data
-    cert["tx"] = {
-        "TransactionType": "Payment",
-        "Account": catalog,
-        "Destination": address,
-        "Amount": "1",
-        "Memos": [{"Memo": {"MemoType": cert["memoType"], "MemoFormat": cert["memoFormat"], "MemoData": memo_data}}],
+    vault = eth_vault_dir() / vault_name(address)
+    vault.write_bytes(plain)
+    remember_eth_certificate(cert)
+    return {
+        "ok": True,
+        "certificate": cert,
+        "address": address,
+        "catalogAddress": catalog,
+        "shard": shard,
+        "pointer": pointer,
+        "vault": vault.name,
     }
-    cert["spot"] = encode_spot(image_hash, secret)
-    vault = xrp_vault_dir() / f"{address}.apxr"
-    vault.write_bytes(envelope)
-    remember_xrp_certificate(cert)
-    return {"ok": True, "certificate": cert, "address": address, "catalogAddress": catalog, "vault": vault.name, "spot": cert["spot"]}
 
 
-def decode_plate(envelope: bytes, secret: bytes | None = None) -> tuple[dict, bytes] | None:
-    if len(envelope) < 5 + XRP_NONCE_SIZE + XRP_HASH_SIZE * 2:
-        return None
-    if envelope[:4] != XRP_MAGIC or envelope[4] != XRP_VERSION:
-        return None
-    secret = secret if secret is not None else load_xrp_secret()
-    cursor = 5
-    nonce = envelope[cursor : cursor + XRP_NONCE_SIZE]
-    cursor += XRP_NONCE_SIZE
-    image_hash = envelope[cursor : cursor + XRP_HASH_SIZE]
-    cursor += XRP_HASH_SIZE
-    tag = envelope[cursor : cursor + XRP_HASH_SIZE]
-    cursor += XRP_HASH_SIZE
-    cipher = envelope[cursor:]
-    expected = hmac.new(cipher_key(secret), nonce + image_hash + cipher, hashlib.sha256).digest()
-    if not hmac.compare_digest(expected, tag):
-        return None
-    key = sha256_bytes(secret + nonce + image_hash)
-    plain = xor_seal(cipher, key)
-    if sha256_bytes(plain) != image_hash:
-        return None
-    return {"imageHash": to_hex(image_hash), "tag": to_hex(tag)}, plain
-
-
-def remember_xrp_certificate(cert: dict) -> dict:
-    ledger = load_xrp_ledger()
+def remember_eth_certificate(cert: dict) -> dict:
+    ledger = load_eth_ledger()
     digest = str(cert.get("imageHash") or "")
     plates = [item for item in ledger.get("plates") or [] if str(item.get("imageHash") or "") != digest]
     plates.insert(0, cert)
     ledger["plates"] = plates[:80]
-    ledger["catalogAddress"] = cert.get("tx", {}).get("Account") or catalog_address()
+    ledger["catalogAddress"] = cert.get("catalogAddress") or catalog_address()
     ledger["updatedAt"] = datetime.now().isoformat(timespec="seconds")
-    path = xrp_ledger_file()
+    path = eth_ledger_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
     return ledger
 
 
-def load_xrp_ledger() -> dict:
-    path = xrp_ledger_file()
+def load_eth_ledger() -> dict:
+    path = eth_ledger_file()
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -672,8 +585,8 @@ def load_xrp_ledger() -> dict:
     return {"plates": [], "catalogAddress": catalog_address()}
 
 
-def list_xrp() -> dict:
-    ledger = load_xrp_ledger()
+def list_eth() -> dict:
+    ledger = load_eth_ledger()
     plates = ledger.get("plates") or []
     return {
         "ok": True,
@@ -696,7 +609,7 @@ def encode_open_folders(folders: list[Path]) -> dict:
                 continue
             try:
                 size = path.stat().st_size
-                if size <= 0 or size > XRP_MAX_PLATE:
+                if size <= 0 or size > ETH_MAX_PLATE:
                     skipped += 1
                     continue
                 plain = path.read_bytes()
@@ -710,11 +623,13 @@ def encode_open_folders(folders: list[Path]) -> dict:
                 last = result
             else:
                 skipped += 1
-    payload = list_xrp()
+    payload = list_eth()
     payload["encoded"] = encoded
     payload["skipped"] = skipped
     if last:
         payload["address"] = last.get("address")
+        payload["shard"] = last.get("shard")
+        payload["pointer"] = last.get("pointer")
         payload["certificate"] = last.get("certificate")
     return payload
 
@@ -862,20 +777,20 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **load_skin()})
             return
-        if parsed.path == "/api/xrp":
-            self._send_json(list_xrp())
+        if parsed.path == "/api/eth":
+            self._send_json(list_eth())
             return
-        if parsed.path == "/api/xrp/spot":
+        if parsed.path == "/api/eth/shard":
             qs = parse_qs(parsed.query)
-            code = str((qs.get("c") or qs.get("code") or [""])[0])
-            located = resolve_spot(code)
+            code = str((qs.get("c") or qs.get("code") or qs.get("pointer") or [""])[0])
+            located = resolve_shard(code)
             if not located.get("ok"):
-                self.send_error(400, str(located.get("error") or "Invalid spot"))
+                self.send_error(400, str(located.get("error") or "Invalid shard"))
                 return
             self._send_json(located)
             return
-        if parsed.path.startswith("/media/xrp/"):
-            self._send_xrp_media(unquote(parsed.path[len("/media/xrp/") :]))
+        if parsed.path.startswith("/media/eth/"):
+            self._send_eth_media(unquote(parsed.path[len("/media/eth/") :]))
             return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
@@ -890,14 +805,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **save_skin(self._read_json())})
             return
-        if parsed.path == "/api/xrp":
-            self._encode_xrp()
+        if parsed.path == "/api/eth":
+            self._encode_eth()
             return
-        if parsed.path == "/api/xrp/decode":
+        if parsed.path == "/api/eth/open":
             body = self._read_json()
-            located = resolve_spot(str(body.get("spot") or body.get("code") or ""))
+            located = resolve_shard(str(body.get("pointer") or body.get("code") or body.get("address") or ""))
             if not located.get("ok"):
-                self.send_error(400, str(located.get("error") or "Invalid spot"))
+                self.send_error(400, str(located.get("error") or "Invalid shard"))
                 return
             self._send_json(located)
             return
@@ -1011,14 +926,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
                 fields[str(name)] = payload.decode("utf-8", "replace")
         return fields, files
 
-    def _encode_xrp(self) -> None:
+    def _encode_eth(self) -> None:
         content_type = self.headers.get("Content-Type") or ""
         if "multipart/form-data" in content_type:
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = 0
-            if length <= 0 or length > XRP_MAX_PLATE + 4096:
+            if length <= 0 or length > ETH_MAX_PLATE + 4096:
                 self.send_error(400, "Invalid plate")
                 return
             fields, files = self._parse_multipart(content_type, self.rfile.read(length))
@@ -1040,18 +955,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             return
         self._send_json(encode_open_folders(folders))
 
-    def _send_xrp_media(self, rel: str) -> None:
+    def _send_eth_media(self, rel: str) -> None:
         address = Path(rel).name
-        vault = open_xrp_vault(address)
+        vault = open_eth_vault(address)
         if not vault:
             self.send_error(404, "Not found")
             return
-        unlocked = decode_plate(vault.read_bytes())
-        if not unlocked:
-            self.send_error(404, "Locked")
-            return
-        header, plain = unlocked
-        cert = lookup_xrp_certificate(address, header.get("imageHash") or "")
+        plain = vault.read_bytes()
+        cert = lookup_eth_certificate(address)
         ctype = str((cert or {}).get("mime") or mimetypes.guess_type(str((cert or {}).get("file") or ""))[0] or "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)

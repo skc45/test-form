@@ -16,7 +16,6 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
-import java.math.BigInteger
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -24,8 +23,6 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Calendar
 import java.util.Locale
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 class CatalogStore(private val context: Context) {
     private val prefs: SharedPreferences =
@@ -364,28 +361,28 @@ class CatalogStore(private val context: Context) {
         }
     }
 
-    fun xrpResponse(): WebResourceResponse {
-        return json(xrpLedger())
+    fun ethResponse(): WebResourceResponse {
+        return json(ethShard())
     }
 
-    fun xrpLedger(): JSONObject {
-        val plates = xrpPlates()
+    fun ethShard(): JSONObject {
+        val plates = ethPlates()
         return JSONObject()
             .put("ok", true)
-            .put("catalogAddress", catalogXrpAddress())
+            .put("catalogAddress", catalogEthAddress())
             .put("count", plates.length())
             .put("plates", plates)
     }
 
-    fun xrpEncode(url: String, filename: String, title: String): JSONObject {
-        val dest = File(context.cacheDir, "xrp-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
+    fun ethEncode(url: String, filename: String, title: String): JSONObject {
+        val dest = File(context.cacheDir, "eth-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
         dest.parentFile?.mkdirs()
         if (!exportToFile(url, dest) { }) return JSONObject().put("ok", false)
         val bytes = dest.readBytes()
-        return encodeXrpPlate(bytes, title.ifBlank { dest.nameWithoutExtension }, dest.name, mimeFor(dest.name))
+        return encodeEthPlate(bytes, title.ifBlank { dest.nameWithoutExtension }, dest.name, mimeFor(dest.name))
     }
 
-    fun xrpEncodeFolder(): JSONObject {
+    fun ethEncodeFolder(): JSONObject {
         var encoded = 0
         var skipped = 0
         media.values.forEach { entry ->
@@ -393,111 +390,96 @@ class CatalogStore(private val context: Context) {
                 skipped += 1
                 return@forEach
             }
-            if (bytes.isEmpty() || bytes.size > XRP_MAX_PLATE) {
+            if (bytes.isEmpty() || bytes.size > ETH_MAX_PLATE) {
                 skipped += 1
                 return@forEach
             }
             val name = DocumentFile.fromSingleUri(context, entry.first)?.name ?: "plate.jpg"
-            val result = encodeXrpPlate(bytes, name.substringBeforeLast('.'), name, entry.second)
+            val result = encodeEthPlate(bytes, name.substringBeforeLast('.'), name, entry.second)
             if (result.optBoolean("ok")) encoded += 1 else skipped += 1
         }
-        return xrpLedger().put("encoded", encoded).put("skipped", skipped)
+        return ethShard().put("encoded", encoded).put("skipped", skipped)
     }
 
-    fun writeXrpLedgerFile(): File {
-        val dest = File(context.cacheDir, "share/Aperture-xrp.json")
+    fun writeEthShardFile(): File {
+        val dest = File(context.cacheDir, "share/Aperture-eth.json")
         dest.parentFile?.mkdirs()
-        dest.writeText(xrpLedger().toString())
+        dest.writeText(ethShard().toString())
         return dest
     }
 
-    private fun encodeXrpPlate(plain: ByteArray, title: String, filename: String, mime: String): JSONObject {
-        if (plain.isEmpty() || plain.size > XRP_MAX_PLATE) return JSONObject().put("ok", false)
-        val secret = xrpSecret()
-        val nonce = ByteArray(XRP_NONCE)
-        SecureRandom().nextBytes(nonce)
+    private fun encodeEthPlate(plain: ByteArray, title: String, filename: String, mime: String): JSONObject {
+        if (plain.isEmpty() || plain.size > ETH_MAX_PLATE) return JSONObject().put("ok", false)
+        val secret = ethSecret()
         val imageHash = sha256(plain)
-        val key = sha256(secret + nonce + imageHash)
-        val cipher = xorSeal(plain, key)
-        val tag = hmacSha256(sha256(XRP_LABEL + secret), nonce + imageHash + cipher)
-        val envelope = XRP_MAGIC + byteArrayOf(XRP_VERSION) + nonce + imageHash + tag + cipher
-        val address = plateXrpAddress(imageHash, secret)
-        val catalog = catalogXrpAddress(secret)
+        val address = plateEthAddress(imageHash, secret)
+        val catalog = catalogEthAddress(secret)
+        val shard = shardId(imageHash, secret)
+        val pointer = shardPointer(shard, address)
         val cert = JSONObject()
             .put("v", 1)
-            .put("kind", "aperture-xrp")
-            .put("ledger", "xrpl")
+            .put("kind", "aperture-eth-shard")
+            .put("chain", "ethereum")
+            .put("shard", shard)
+            .put("address", address)
+            .put("catalogAddress", catalog)
+            .put("pointer", pointer)
             .put("title", title.ifBlank { "Plate" })
             .put("file", filename)
             .put("mime", mime.ifBlank { mimeFor(filename) })
             .put("imageHash", toHex(imageHash))
-            .put("cipherHash", toHex(sha256(cipher)))
-            .put("address", address)
-            .put("tag", toHex(tag))
             .put("encodedAt", java.time.Instant.now().toString().take(19))
-        val memoData = toHex(stableCertJson(cert).toByteArray(StandardCharsets.UTF_8))
-        val memoType = toHex(XRP_MEMO_TYPE.toByteArray(StandardCharsets.UTF_8))
-        val memoFormat = toHex("application/json".toByteArray(StandardCharsets.UTF_8))
-        cert.put("memoType", memoType)
-        cert.put("memoFormat", memoFormat)
-        cert.put("memoData", memoData)
-        cert.put(
-            "tx",
-            JSONObject()
-                .put("TransactionType", "Payment")
-                .put("Account", catalog)
-                .put("Destination", address)
-                .put("Amount", "1")
-                .put(
-                    "Memos",
-                    JSONArray().put(
-                        JSONObject().put(
-                            "Memo",
-                            JSONObject()
-                                .put("MemoType", memoType)
-                                .put("MemoFormat", memoFormat)
-                                .put("MemoData", memoData),
-                        ),
-                    ),
-                ),
-        )
-        cert.put("spot", encodeXrpSpot(imageHash, secret))
-        val vault = File(xrpVaultDir(), "$address.apxr")
-        vault.writeBytes(envelope)
-        rememberXrpCertificate(cert)
+            .put("tx", JSONObject().put("from", catalog).put("to", address).put("data", "0x" + toHex(imageHash).lowercase()))
+        val vault = File(ethVaultDir(), vaultName(address))
+        vault.writeBytes(plain)
+        rememberEthCertificate(cert)
         return JSONObject()
             .put("ok", true)
             .put("certificate", cert)
             .put("address", address)
             .put("catalogAddress", catalog)
+            .put("shard", shard)
+            .put("pointer", pointer)
             .put("vault", vault.name)
-            .put("spot", cert.optString("spot"))
     }
 
-    fun xrpDecode(code: String): JSONObject {
-        return resolveSpot(code)
+    fun ethOpen(code: String): JSONObject {
+        return resolveShard(code)
     }
 
-    fun xrpSpotResponse(code: String): WebResourceResponse {
-        return json(resolveSpot(code))
+    fun ethShardResponse(code: String): WebResourceResponse {
+        return json(resolveShard(code))
     }
 
-    fun resolveSpot(code: String): JSONObject {
-        val located = decodeXrpSpot(code) ?: return JSONObject().put("ok", false).put("error", "invalid spot")
-        val cert = lookupXrpCertificate(located.optString("address"), located.optString("imageHash"))
-        val decoded = decodeVault(located.optString("address"))
+    fun resolveShard(code: String): JSONObject {
+        val located = parsePointer(code) ?: return JSONObject().put("ok", false).put("error", "invalid shard")
+        val cert = lookupEthCertificate(located.optString("address"))
+        val decoded = readVault(located.optString("address"))
+        if (cert == null && decoded == null) return JSONObject().put("ok", false).put("error", "unknown shard")
+        if (cert != null && located.has("shard") && !located.isNull("shard") && cert.optInt("shard", -1) != located.optInt("shard", -2)) {
+            return JSONObject().put("ok", false).put("error", "shard mismatch")
+        }
+        if (cert != null) {
+            located.put("address", cert.optString("address", located.optString("address")))
+            located.put("shard", cert.optInt("shard"))
+            located.put("pointer", cert.optString("pointer", located.optString("pointer")))
+            located.put("catalogAddress", cert.optString("catalogAddress", catalogEthAddress()))
+            located.put("imageHash", cert.optString("imageHash"))
+        }
+        val title = cert?.optString("title")?.ifBlank { "ETH plate" } ?: "ETH plate"
         located.put("certificate", cert ?: JSONObject())
-        located.put("title", cert?.optString("title")?.ifBlank { "XRP plate" } ?: "XRP plate")
+        located.put("title", title)
         located.put("file", cert?.optString("file") ?: "plate")
         located.put("mime", cert?.optString("mime") ?: "application/octet-stream")
-        located.put("src", if (decoded != null) "/media/xrp/" + located.optString("address") else "")
+        located.put("src", if (decoded != null) "/media/eth/" + located.optString("address") else "")
         located.put("decoded", decoded != null)
+        located.put("search", shardSearchQuery(located, cert))
         return located
     }
 
-    fun xrpMediaResponse(address: String): WebResourceResponse {
-        val decoded = decodeVault(address) ?: return notFound()
-        val cert = lookupXrpCertificate(address, "")
+    fun ethMediaResponse(address: String): WebResourceResponse {
+        val decoded = readVault(address) ?: return notFound()
+        val cert = lookupEthCertificate(address)
         val mime = cert?.optString("mime").orEmpty().ifBlank { mimeFor(cert?.optString("file").orEmpty()) }
         return WebResourceResponse(
             mime,
@@ -509,111 +491,95 @@ class CatalogStore(private val context: Context) {
         )
     }
 
-    private fun encodeXrpSpot(imageHash: ByteArray, secret: ByteArray): String {
-        val dest = sha256(imageHash + XRP_PLATE + secret).copyOf(20)
-        val catalog = sha256(XRP_CATALOG + secret).copyOf(20)
-        val payload = dest + catalog + imageHash
-        val nonce = ByteArray(XRP_NONCE)
-        SecureRandom().nextBytes(nonce)
-        val key = sha256(secret + nonce + SPOT_LABEL)
-        val cipher = xorSeal(payload, key)
-        val tag = hmacSha256(sha256(SPOT_LABEL + secret), nonce + cipher)
-        val envelope = SPOT_MAGIC + byteArrayOf(XRP_VERSION) + nonce + tag + cipher
-        return SPOT_PREFIX + b58encode(envelope)
+    private fun checksumAddress(payload20: ByteArray): String {
+        val hex = toHex(payload20.copyOf(20)).lowercase()
+        val digest = sha256(hex.toByteArray(StandardCharsets.US_ASCII))
+        val chars = StringBuilder("0x")
+        for (index in hex.indices) {
+            val ch = hex[index]
+            val nibble = (digest[index shr 1].toInt() shr (if (index % 2 == 0) 4 else 0)) and 0x0F
+            chars.append(if (ch.isLetter() && nibble >= 8) ch.uppercaseChar() else ch)
+        }
+        return chars.toString()
     }
 
-    private fun decodeXrpSpot(code: String): JSONObject? {
+    private fun normalizeAddress(value: String): String {
+        val hex = value.trim().removePrefix("0x").removePrefix("0X").filter { it in "0123456789abcdefABCDEF" }.lowercase()
+        return if (hex.length == 40) "0x$hex" else ""
+    }
+
+    private fun catalogEthAddress(secret: ByteArray = ethSecret()): String {
+        return checksumAddress(sha256(ETH_CATALOG + secret).copyOf(20))
+    }
+
+    private fun plateEthAddress(imageHash: ByteArray, secret: ByteArray): String {
+        return checksumAddress(sha256(imageHash + ETH_PLATE + secret).copyOf(20))
+    }
+
+    private fun shardId(imageHash: ByteArray, secret: ByteArray): Int {
+        val digest = sha256(imageHash + ETH_SHARD + secret)
+        return (((digest[0].toInt() and 0xFF) shl 8) or (digest[1].toInt() and 0xFF)) % ETH_SHARD_COUNT
+    }
+
+    private fun shardPointer(shard: Int, address: String): String {
+        return "$ETH_PREFIX$shard/$address"
+    }
+
+    private fun parsePointer(code: String): JSONObject? {
         var raw = code.trim()
-        if (raw.lowercase().startsWith(SPOT_PREFIX)) raw = raw.substring(SPOT_PREFIX.length)
-        val packed = b58decode(raw) ?: return null
-        val header = 5 + XRP_NONCE + 32
-        if (packed.size < header + SPOT_PAYLOAD) return null
-        if (packed[0] != SPOT_MAGIC[0] || packed[1] != SPOT_MAGIC[1] || packed[2] != SPOT_MAGIC[2] || packed[3] != SPOT_MAGIC[3] || packed[4] != XRP_VERSION) {
-            return null
+        if (raw.lowercase().startsWith(ETH_PREFIX)) raw = raw.substring(ETH_PREFIX.length)
+        if (raw.isBlank()) return null
+        var shard: Int? = null
+        var address = raw
+        val slash = raw.indexOf('/')
+        if (slash >= 0 && raw.substring(0, slash).all { it.isDigit() }) {
+            shard = raw.substring(0, slash).toIntOrNull()
+            address = raw.substring(slash + 1)
         }
-        val nonce = packed.copyOfRange(5, 5 + XRP_NONCE)
-        val tag = packed.copyOfRange(5 + XRP_NONCE, header)
-        val cipher = packed.copyOfRange(header, packed.size)
-        val expected = hmacSha256(sha256(SPOT_LABEL + xrpSecret()), nonce + cipher)
-        if (!expected.contentEquals(tag)) return null
-        val payload = xorSeal(cipher, sha256(xrpSecret() + nonce + SPOT_LABEL))
-        if (payload.size < SPOT_PAYLOAD) return null
-        val address = classicXrpAddress(payload.copyOfRange(0, 20))
-        val catalog = classicXrpAddress(payload.copyOfRange(20, 40))
-        val imageHash = payload.copyOfRange(40, 72)
+        val normalized = normalizeAddress(address)
+        if (normalized.isBlank()) return null
+        if (shard != null && (shard < 0 || shard >= ETH_SHARD_COUNT)) return null
         return JSONObject()
             .put("ok", true)
-            .put("kind", "aperture-xrp-spot")
-            .put("ledger", "xrpl")
-            .put("address", address)
-            .put("catalogAddress", catalog)
-            .put("destination", address)
-            .put("account", catalog)
-            .put("imageHash", toHex(imageHash))
-            .put("spot", if (code.trim().lowercase().startsWith(SPOT_PREFIX)) code.trim() else SPOT_PREFIX + raw)
+            .put("kind", "aperture-eth-shard")
+            .put("chain", "ethereum")
+            .apply { if (shard != null) put("shard", shard) else put("shard", JSONObject.NULL) }
+            .put("address", normalized)
+            .put("pointer", if (shard == null) normalized else shardPointer(shard, normalized))
     }
 
-    private fun lookupXrpCertificate(address: String, imageHash: String): JSONObject? {
-        val digest = imageHash.uppercase()
-        val plates = xrpPlates()
+    private fun vaultName(address: String): String {
+        return normalizeAddress(address).removePrefix("0x") + ".eth"
+    }
+
+    private fun lookupEthCertificate(address: String): JSONObject? {
+        val wanted = normalizeAddress(address)
+        if (wanted.isBlank()) return null
+        val plates = ethPlates()
         for (i in 0 until plates.length()) {
             val item = plates.getJSONObject(i)
-            if (address.isNotBlank() && item.optString("address") == address) return item
-            if (digest.isNotBlank() && item.optString("imageHash").uppercase() == digest) return item
+            if (normalizeAddress(item.optString("address")) == wanted) return item
         }
         return null
     }
 
-    private fun decodeVault(address: String): ByteArray? {
-        val name = address.substringAfterLast('/').ifBlank { return null }
-        val file = File(xrpVaultDir(), "$name.apxr")
-        if (!file.isFile) return null
-        return decodeXrpEnvelope(file.readBytes())
+    private fun readVault(address: String): ByteArray? {
+        val name = vaultName(address)
+        if (name == ".eth") return null
+        val file = File(ethVaultDir(), name)
+        return if (file.isFile) file.readBytes() else null
     }
 
-    private fun decodeXrpEnvelope(data: ByteArray, secret: ByteArray = xrpSecret()): ByteArray? {
-        val header = 5 + XRP_NONCE + 64
-        if (data.size < header) return null
-        if (data[0] != XRP_MAGIC[0] || data[1] != XRP_MAGIC[1] || data[2] != XRP_MAGIC[2] || data[3] != XRP_MAGIC[3] || data[4] != XRP_VERSION) {
-            return null
-        }
-        val nonce = data.copyOfRange(5, 5 + XRP_NONCE)
-        val imageHash = data.copyOfRange(5 + XRP_NONCE, 5 + XRP_NONCE + 32)
-        val tag = data.copyOfRange(5 + XRP_NONCE + 32, header)
-        val cipher = data.copyOfRange(header, data.size)
-        val expected = hmacSha256(sha256(XRP_LABEL + secret), nonce + imageHash + cipher)
-        if (!expected.contentEquals(tag)) return null
-        val plain = xorSeal(cipher, sha256(secret + nonce + imageHash))
-        if (!sha256(plain).contentEquals(imageHash)) return null
-        return plain
+    private fun shardSearchQuery(located: JSONObject, cert: JSONObject?): String {
+        val title = cert?.optString("title").orEmpty().ifBlank { located.optString("title") }
+        if (title.isNotBlank() && title.lowercase() !in setOf("plate", "eth plate", "ethereum plate")) return title
+        val file = cert?.optString("file").orEmpty().substringBeforeLast('.').trim()
+        if (file.isNotBlank() && file.lowercase() != "plate") return file
+        return located.optString("address")
     }
 
-    private fun b58decode(text: String): ByteArray? {
-        var zeros = 0
-        for (ch in text) {
-            if (ch == XRP_ALPHABET[0]) zeros += 1 else break
-        }
-        var number = BigInteger.ZERO
-        val base = BigInteger.valueOf(58)
-        for (ch in text) {
-            val index = XRP_ALPHABET.indexOf(ch)
-            if (index < 0) return null
-            number = number.multiply(base).add(BigInteger.valueOf(index.toLong()))
-        }
-        val signed = if (number == BigInteger.ZERO) ByteArray(0) else number.toByteArray()
-        val body = if (signed.isNotEmpty() && signed[0] == 0.toByte()) signed.copyOfRange(1, signed.size) else signed
-        return ByteArray(zeros) { 0 } + body
-    }
-
-    private fun stableCertJson(cert: JSONObject): String {
-        val keys = cert.keys().asSequence().sorted().toList()
-        val ordered = JSONObject()
-        for (key in keys) ordered.put(key, cert.get(key))
-        return ordered.toString()
-    }
-
-    private fun rememberXrpCertificate(cert: JSONObject) {
-        val plates = xrpPlates()
+    private fun rememberEthCertificate(cert: JSONObject) {
+        val plates = ethPlates()
         val digest = cert.optString("imageHash")
         val next = JSONArray()
         next.put(cert)
@@ -623,11 +589,11 @@ class CatalogStore(private val context: Context) {
             next.put(item)
             if (next.length() >= 80) break
         }
-        prefs.edit().putString(KEY_XRP, next.toString()).apply()
+        prefs.edit().putString(KEY_ETH, next.toString()).apply()
     }
 
-    private fun xrpPlates(): JSONArray {
-        val raw = prefs.getString(KEY_XRP, "").orEmpty()
+    private fun ethPlates(): JSONArray {
+        val raw = prefs.getString(KEY_ETH, "").orEmpty()
         if (raw.isBlank()) return JSONArray()
         return try {
             JSONArray(raw)
@@ -636,76 +602,32 @@ class CatalogStore(private val context: Context) {
         }
     }
 
-    private fun xrpSecret(): ByteArray {
-        val raw = prefs.getString(KEY_XRP_SECRET, "").orEmpty()
-        if (raw.length == 64) {
-            return hexToBytes(raw)
-        }
+    private fun ethSecret(): ByteArray {
+        val raw = prefs.getString(KEY_ETH_SECRET, "").orEmpty()
+        if (raw.length == 64) return hexToBytes(raw)
         val secret = ByteArray(32)
         SecureRandom().nextBytes(secret)
-        prefs.edit().putString(KEY_XRP_SECRET, toHex(secret).lowercase()).apply()
+        prefs.edit().putString(KEY_ETH_SECRET, toHex(secret).lowercase()).apply()
         return secret
     }
 
-    private fun catalogXrpAddress(secret: ByteArray = xrpSecret()): String {
-        return classicXrpAddress(sha256(XRP_CATALOG + secret).copyOf(20))
-    }
-
-    private fun plateXrpAddress(imageHash: ByteArray, secret: ByteArray): String {
-        return classicXrpAddress(sha256(imageHash + XRP_PLATE + secret).copyOf(20))
-    }
-
-    private fun classicXrpAddress(payload20: ByteArray): String {
-        val versioned = byteArrayOf(0) + payload20.copyOf(20)
-        val check = sha256(sha256(versioned)).copyOf(4)
-        return b58encode(versioned + check)
-    }
-
-    private fun b58encode(data: ByteArray): String {
-        var zeros = 0
-        for (byte in data) {
-            if (byte == 0.toByte()) zeros += 1 else break
-        }
-        var number = BigInteger(1, data)
-        val chars = StringBuilder()
-        val base = BigInteger.valueOf(58)
-        if (number == BigInteger.ZERO) chars.append(XRP_ALPHABET[0])
-        while (number > BigInteger.ZERO) {
-            val div = number.divideAndRemainder(base)
-            number = div[0]
-            chars.append(XRP_ALPHABET[div[1].toInt()])
-        }
-        return XRP_ALPHABET[0].toString().repeat(zeros) + chars.reverse().toString()
-    }
-
-    private fun xorSeal(plain: ByteArray, key: ByteArray): ByteArray {
-        if (key.isEmpty()) return plain
-        return ByteArray(plain.size) { index -> (plain[index].toInt() xor key[index % key.size].toInt()).toByte() }
-    }
-
-    private fun sha256(data: ByteArray): ByteArray {
-        return MessageDigest.getInstance("SHA-256").digest(data)
-    }
-
-    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(key, "HmacSHA256"))
-        return mac.doFinal(data)
+    private fun ethVaultDir(): File {
+        val dir = File(context.filesDir, "eth")
+        dir.mkdirs()
+        return dir
     }
 
     private fun toHex(data: ByteArray): String {
         return data.joinToString("") { byte -> "%02X".format(byte) }
     }
 
+    private fun sha256(data: ByteArray): ByteArray {
+        return MessageDigest.getInstance("SHA-256").digest(data)
+    }
+
     private fun hexToBytes(value: String): ByteArray {
         val hex = value.replace(Regex("[^0-9A-Fa-f]"), "")
         return ByteArray(hex.length / 2) { index -> hex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
-    }
-
-    private fun xrpVaultDir(): File {
-        val dir = File(context.filesDir, "xrp")
-        dir.mkdirs()
-        return dir
     }
 
     private fun readUriBytes(uri: Uri): ByteArray? {
@@ -908,23 +830,16 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val KEY_SKIN = "skin"
-        private const val KEY_XRP = "xrpLedger"
-        private const val KEY_XRP_SECRET = "xrpSecret"
+        private const val KEY_ETH = "ethShard"
+        private const val KEY_ETH_SECRET = "ethSecret"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
-        private const val XRP_VERSION: Byte = 1
-        private const val XRP_NONCE = 16
-        private const val XRP_MAX_PLATE = 25 * 1024 * 1024
-        private const val XRP_MEMO_TYPE = "aperture/xrp"
-        private val XRP_MAGIC = byteArrayOf(0x41, 0x50, 0x58, 0x52)
-        private val XRP_LABEL = "aperture-xrp-cipher-v1".toByteArray(StandardCharsets.UTF_8)
-        private val XRP_PLATE = "xrpl-plate".toByteArray(StandardCharsets.UTF_8)
-        private val XRP_CATALOG = "xrpl-catalog".toByteArray(StandardCharsets.UTF_8)
-        private val SPOT_MAGIC = byteArrayOf(0x41, 0x50, 0x58, 0x53)
-        private val SPOT_LABEL = "aperture-xrp-spot-v1".toByteArray(StandardCharsets.UTF_8)
-        private const val SPOT_PREFIX = "apxs1:"
-        private const val SPOT_PAYLOAD = 72
-        private const val XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
+        private const val ETH_MAX_PLATE = 25 * 1024 * 1024
+        private const val ETH_SHARD_COUNT = 64
+        private const val ETH_PREFIX = "eths:"
+        private val ETH_CATALOG = "eth-catalog".toByteArray(StandardCharsets.UTF_8)
+        private val ETH_PLATE = "eth-plate".toByteArray(StandardCharsets.UTF_8)
+        private val ETH_SHARD = "eth-shard".toByteArray(StandardCharsets.UTF_8)
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

@@ -49,11 +49,11 @@
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
               </svg>
             </button>
-            <button class="icon-btn" id="xrpBtn" type="button" aria-label="Encode onto XRP" title="XRP cipher">
+            <button class="icon-btn" id="ethBtn" type="button" aria-label="Encode onto Ethereum shard" title="Ethereum shard">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="2.2" />
-                <circle cx="12" cy="12" r="5.2" />
-                <circle cx="12" cy="12" r="8.2" />
+                <path d="M12 2.4l7.2 9.4L12 21.6 4.8 11.8 12 2.4z" />
+                <path d="M12 2.4v19.2" />
+                <path d="M4.8 11.8H19.2" />
               </svg>
             </button>
             <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
@@ -93,11 +93,11 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>X</kbd> encode onto XRP · <kbd>T</kbd> skin</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>X</kbd> encode onto shard · <kbd>T</kbd> skin</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
-          <button class="xrp-bar" id="xrpBar" type="button">
-            <span class="xrp-copy" id="xrpCopy">Encode onto XRP</span>
+          <button class="eth-bar" id="ethBar" type="button">
+            <span class="eth-copy" id="ethCopy">Encode onto shard</span>
           </button>
           <p class="empty" id="empty" hidden>No plates match that search.</p>
         </section>
@@ -167,12 +167,12 @@
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Send as a post</dd></div>
-          <div><dt>X</dt><dd>Encode onto XRP</dd></div>
+          <div><dt>X</dt><dd>Encode onto shard</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Encode onto XRP, then paste an apxs1: spot code to decode the plate from that ledger location.</p>
+        <p class="help-foot">Open a folder to browse plates. Encode onto an Ethereum shard, then paste an eths: pointer or 0x address to open that plate. If the shard matches but no image is stored, Aperture searches the catalog for it.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -243,27 +243,27 @@
         </div>
       </div>
     </div>
-    <div class="xrp-ledger" id="xrpLedger" hidden>
-      <div class="xrp-card">
-        <p class="help-kicker">XRP cipher</p>
-        <h2>Encode onto XRP</h2>
-        <p class="xrp-status" id="xrpStatus">Seal plates and write their fingerprints as XRPL memos.</p>
-        <p class="xrp-address" id="xrpCatalogAddress" hidden></p>
-        <ol class="xrp-list" id="xrpList"></ol>
-        <label class="xrp-spot-field">
-          <span class="sr-only">Ledger spot</span>
-          <input id="xrpSpotInput" type="text" placeholder="Paste apxs1: spot code…" autocomplete="off" spellcheck="false" />
+    <div class="eth-shard" id="ethShard" hidden>
+      <div class="eth-card">
+        <p class="help-kicker">Ethereum shard</p>
+        <h2>Encode onto shard</h2>
+        <p class="eth-status" id="ethStatus">Place plates onto an Ethereum shard and open them from a 0x pointer.</p>
+        <p class="eth-address" id="ethCatalogAddress" hidden></p>
+        <ol class="eth-list" id="ethList"></ol>
+        <label class="eth-pointer-field">
+          <span class="sr-only">Shard pointer</span>
+          <input id="ethPointerInput" type="text" placeholder="Paste eths: shard pointer or 0x address…" autocomplete="off" spellcheck="false" />
         </label>
-        <p class="xrp-spot-readout" id="xrpSpotReadout" hidden></p>
-        <div class="download-track post-track" id="xrpTrack" hidden>
-          <span class="download-fill" id="xrpFill"></span>
+        <p class="eth-pointer-readout" id="ethPointerReadout" hidden></p>
+        <div class="download-track post-track" id="ethTrack" hidden>
+          <span class="download-fill" id="ethFill"></span>
         </div>
         <div class="opener-actions">
-          <button class="text-btn opener-primary" id="xrpEncodeCatalog" type="button">Encode catalog</button>
-          <button class="text-btn" id="xrpEncodePlate" type="button">Encode this plate</button>
-          <button class="text-btn" id="xrpDecode" type="button">Decode spot</button>
-          <button class="text-btn" id="xrpDownload" type="button">Download ledger</button>
-          <button class="text-btn" id="xrpClose" type="button">Close</button>
+          <button class="text-btn opener-primary" id="ethEncodeCatalog" type="button">Encode catalog</button>
+          <button class="text-btn" id="ethEncodePlate" type="button">Encode this plate</button>
+          <button class="text-btn" id="ethOpen" type="button">Open shard</button>
+          <button class="text-btn" id="ethDownload" type="button">Download shard</button>
+          <button class="text-btn" id="ethClose" type="button">Close</button>
         </div>
       </div>
     </div>

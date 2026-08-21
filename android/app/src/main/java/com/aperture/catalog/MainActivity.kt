@@ -103,14 +103,14 @@ class MainActivity : AppCompatActivity() {
                             store.cacheResponse()
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
-                        path == "/api/xrp" && request.method == "GET" -> store.xrpResponse()
-                        path == "/api/xrp/spot" && request.method == "GET" -> {
+                        path == "/api/eth" && request.method == "GET" -> store.ethResponse()
+                        path == "/api/eth/shard" && request.method == "GET" -> {
                             val code = url.getQueryParameter("c") ?: url.getQueryParameter("code").orEmpty()
-                            store.xrpSpotResponse(code)
+                            store.ethShardResponse(code)
                         }
-                        path.startsWith("/media/xrp/") -> {
-                            val rel = Uri.decode(path.removePrefix("/media/xrp/"))
-                            store.xrpMediaResponse(rel)
+                        path.startsWith("/media/eth/") -> {
+                            val rel = Uri.decode(path.removePrefix("/media/eth/"))
+                            store.ethMediaResponse(rel)
                         }
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
@@ -228,29 +228,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun xrpLedger(): String {
-            return store.xrpLedger().toString()
+        fun ethShard(): String {
+            return store.ethShard().toString()
         }
 
         @JavascriptInterface
-        fun xrpDecode(code: String): String {
-            return store.xrpDecode(code).toString()
+        fun ethOpen(code: String): String {
+            return store.ethOpen(code).toString()
         }
 
         @JavascriptInterface
-        fun xrpEncode(url: String, filename: String, title: String): String {
-            return store.xrpEncode(url, filename, title).toString()
+        fun ethEncode(url: String, filename: String, title: String): String {
+            return store.ethEncode(url, filename, title).toString()
         }
 
         @JavascriptInterface
-        fun xrpEncodeFolder(): String {
-            return store.xrpEncodeFolder().toString()
+        fun ethEncodeFolder(): String {
+            return store.ethEncodeFolder().toString()
         }
 
         @JavascriptInterface
-        fun shareXrp() {
+        fun shareEth() {
             runOnUiThread {
-                startShareXrp()
+                startShareEth()
             }
         }
 
@@ -322,10 +322,10 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun startShareXrp() {
+    private fun startShareEth() {
         Thread {
             val dest = try {
-                store.writeXrpLedgerFile()
+                store.writeEthShardFile()
             } catch (_: Exception) {
                 null
             }
@@ -334,13 +334,13 @@ class MainActivity : AppCompatActivity() {
                 val uri = FileProvider.getUriForFile(this, "$packageName.files", dest)
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "application/json"
-                    clipData = android.content.ClipData.newUri(contentResolver, "xrp", uri)
+                    clipData = android.content.ClipData.newUri(contentResolver, "eth", uri)
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "Aperture XRP ledger")
-                    putExtra(Intent.EXTRA_TEXT, "XRP cipher ledger for Aperture plates.")
+                    putExtra(Intent.EXTRA_SUBJECT, "Aperture Ethereum shard")
+                    putExtra(Intent.EXTRA_TEXT, "Ethereum shard index for Aperture plates.")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                startActivity(Intent.createChooser(send, "Share XRP ledger"))
+                startActivity(Intent.createChooser(send, "Share Ethereum shard"))
             }
         }.start()
     }

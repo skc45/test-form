@@ -104,9 +104,11 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Theme editor", body)
         self.assertIn(b'id="skinEditor"', body)
         self.assertIn(b'id="themeBtn"', body)
-        self.assertIn(b'id="xrpLedger"', body)
-        self.assertIn(b"Encode onto XRP", body)
-        self.assertIn(b'id="xrpBar"', body)
+        self.assertIn(b'id="ethShard"', body)
+        self.assertIn(b"Encode onto shard", body)
+        self.assertIn(b'id="ethBar"', body)
+        self.assertNotIn(b'id="xrpLedger"', body)
+        self.assertNotIn(b"Encode onto XRP", body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -406,7 +408,7 @@ class SkinTests(unittest.TestCase):
             server.server_close()
 
 
-class XrpCipherTests(unittest.TestCase):
+class EthShardTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.environ.get("APERTURE_CACHE_DIR")
@@ -419,57 +421,45 @@ class XrpCipherTests(unittest.TestCase):
             os.environ["APERTURE_CACHE_DIR"] = self.old
         self.tmp.cleanup()
 
-    def test_seal_roundtrip_and_classic_address(self):
+    def test_shard_roundtrip_and_pointer(self):
         result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
         self.assertTrue(result["ok"])
         address = result["address"]
-        self.assertTrue(address.startswith("r"))
-        self.assertGreaterEqual(len(address), 25)
-        self.assertTrue(all(ch in app.XRP_ALPHABET for ch in address))
+        self.assertTrue(address.startswith("0x"))
+        self.assertEqual(len(app.normalize_address(address)), 42)
+        self.assertIn(result["shard"], range(app.ETH_SHARD_COUNT))
+        self.assertTrue(result["pointer"].startswith("eths:"))
         cert = result["certificate"]
-        self.assertEqual(cert["kind"], "aperture-xrp")
-        self.assertEqual(cert["tx"]["Destination"], address)
-        self.assertEqual(cert["tx"]["Account"], result["catalogAddress"])
-        self.assertTrue(cert["memoData"])
-        vault = app.xrp_vault_dir() / result["vault"]
+        self.assertEqual(cert["kind"], "aperture-eth-shard")
+        self.assertEqual(cert["tx"]["to"], address)
+        self.assertEqual(cert["tx"]["from"], result["catalogAddress"])
+        vault = app.eth_vault_dir() / result["vault"]
         self.assertTrue(vault.is_file())
-        self.assertTrue(vault.read_bytes().startswith(app.XRP_MAGIC))
-        unlocked = app.decode_plate(vault.read_bytes())
-        self.assertIsNotNone(unlocked)
-        self.assertEqual(unlocked[1], TINY_PNG)
-        listing = app.list_xrp()
+        self.assertEqual(vault.read_bytes(), TINY_PNG)
+        listing = app.list_eth()
         self.assertEqual(listing["count"], 1)
         self.assertEqual(listing["plates"][0]["address"], address)
-        self.assertTrue(result["spot"].startswith("apxs1:"))
-        self.assertEqual(listing["plates"][0]["spot"], result["spot"])
-
-    def test_spot_cipher_points_at_ledger_and_unlocks(self):
-        result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
-        spot = result["spot"]
-        self.assertTrue(spot.startswith("apxs1:"))
-        located = app.decode_spot(spot)
-        self.assertIsNotNone(located)
-        self.assertEqual(located["address"], result["address"])
-        self.assertEqual(located["catalogAddress"], result["catalogAddress"])
-        self.assertEqual(located["imageHash"], result["certificate"]["imageHash"])
-        self.assertEqual(located["destination"], result["address"])
-        self.assertEqual(located["account"], result["catalogAddress"])
-        resolved = app.resolve_spot(spot)
+        resolved = app.resolve_shard(result["pointer"])
         self.assertTrue(resolved["ok"])
         self.assertTrue(resolved["decoded"])
-        self.assertEqual(resolved["src"], "/media/xrp/" + result["address"])
+        self.assertEqual(resolved["src"], "/media/eth/" + address)
         self.assertEqual(resolved["title"], "Ridge")
-        self.assertIsNone(app.decode_spot("apxs1:not-a-real-spot"))
-        mutated = spot[:-1] + ("2" if spot[-1] != "2" else "3")
-        self.assertIsNone(app.decode_spot(mutated))
+        by_address = app.resolve_shard(address)
+        self.assertEqual(by_address["address"].lower(), address.lower())
 
-    def test_tamper_rejects_decode(self):
+    def test_match_without_image_sets_search(self):
         result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
-        packed = (app.xrp_vault_dir() / result["vault"]).read_bytes()
-        mutated = packed[:-1] + bytes([packed[-1] ^ 1])
-        self.assertIsNone(app.decode_plate(mutated))
+        vault = app.eth_vault_dir() / result["vault"]
+        vault.unlink()
+        resolved = app.resolve_shard(result["pointer"])
+        self.assertTrue(resolved["ok"])
+        self.assertFalse(resolved["decoded"])
+        self.assertEqual(resolved["src"], "")
+        self.assertEqual(resolved["search"], "Ridge")
+        self.assertFalse(app.resolve_shard("eths:0/0x0000000000000000000000000000000000000000").get("ok"))
+        self.assertIsNone(app.parse_pointer("not-a-shard"))
 
-    def test_xrp_http_encodes_plate(self):
+    def test_eth_http_encodes_plate(self):
         photos = Path(self.tmp.name) / "album"
         photos.mkdir()
         (photos / "keep.png").write_bytes(TINY_PNG)
@@ -477,13 +467,13 @@ class XrpCipherTests(unittest.TestCase):
         host, port = server.server_address
         try:
             conn = HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/api/xrp")
+            conn.request("GET", "/api/eth")
             listed = json.loads(conn.getresponse().read())
             conn.close()
             self.assertTrue(listed["ok"])
-            self.assertTrue(listed["catalogAddress"].startswith("r"))
+            self.assertTrue(listed["catalogAddress"].startswith("0x"))
 
-            boundary = "----ApertureXrp7"
+            boundary = "----ApertureEth7"
             payload = (
                 f"--{boundary}\r\n"
                 'Content-Disposition: form-data; name="title"\r\n\r\n'
@@ -495,44 +485,44 @@ class XrpCipherTests(unittest.TestCase):
             conn = HTTPConnection(host, port, timeout=5)
             conn.request(
                 "POST",
-                "/api/xrp",
+                "/api/eth",
                 payload,
                 {"Content-Type": f"multipart/form-data; boundary={boundary}"},
             )
             posted = json.loads(conn.getresponse().read())
             conn.close()
             self.assertTrue(posted["ok"])
-            self.assertTrue(posted["address"].startswith("r"))
+            self.assertTrue(posted["address"].startswith("0x"))
             self.assertEqual(posted["certificate"]["title"], "Ridge")
+            self.assertTrue(posted["pointer"].startswith("eths:"))
 
             conn = HTTPConnection(host, port, timeout=5)
-            conn.request("POST", "/api/xrp", json.dumps({"path": str(photos)}), {"Content-Type": "application/json"})
+            conn.request("POST", "/api/eth", json.dumps({"path": str(photos)}), {"Content-Type": "application/json"})
             foldered = json.loads(conn.getresponse().read())
             conn.close()
             self.assertGreaterEqual(foldered["count"], 1)
-            self.assertTrue(posted["spot"].startswith("apxs1:"))
 
             conn = HTTPConnection(host, port, timeout=5)
             conn.request(
                 "POST",
-                "/api/xrp/decode",
-                json.dumps({"spot": posted["spot"]}),
+                "/api/eth/open",
+                json.dumps({"pointer": posted["pointer"]}),
                 {"Content-Type": "application/json"},
             )
-            decoded = json.loads(conn.getresponse().read())
+            opened = json.loads(conn.getresponse().read())
             conn.close()
-            self.assertTrue(decoded["ok"])
-            self.assertEqual(decoded["address"], posted["address"])
-            self.assertTrue(decoded["decoded"])
+            self.assertTrue(opened["ok"])
+            self.assertEqual(opened["address"].lower(), posted["address"].lower())
+            self.assertTrue(opened["decoded"])
 
             conn = HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/api/xrp/spot?c=" + quote(posted["spot"], safe=""))
+            conn.request("GET", "/api/eth/shard?c=" + quote(posted["pointer"], safe=""))
             spotted = json.loads(conn.getresponse().read())
             conn.close()
-            self.assertEqual(spotted["address"], posted["address"])
+            self.assertEqual(spotted["address"].lower(), posted["address"].lower())
 
             conn = HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/media/xrp/" + posted["address"])
+            conn.request("GET", "/media/eth/" + posted["address"])
             media = conn.getresponse()
             payload = media.read()
             conn.close()
