@@ -132,6 +132,7 @@ class MainActivity : AppCompatActivity() {
                         path == "/api/chain" && request.method == "GET" -> store.chainResponse()
                         path == "/api/vault" && request.method == "GET" -> store.vaultResponse()
                         path == "/api/sync" && request.method == "GET" -> store.syncResponse()
+                        path == "/api/skin" && request.method == "GET" -> store.skinResponse()
                         path.startsWith("/media/vault/") -> {
                             val rel = Uri.decode(path.removePrefix("/media/vault/"))
                             store.vaultMediaResponse(rel)
@@ -301,6 +302,23 @@ class MainActivity : AppCompatActivity() {
                 pickSync.launch("*/*")
             }
         }
+
+        @JavascriptInterface
+        fun loadSkin(): String {
+            return store.loadSkin()
+        }
+
+        @JavascriptInterface
+        fun saveSkin(json: String): String {
+            return store.saveSkin(json).toString()
+        }
+
+        @JavascriptInterface
+        fun setChrome(color: String) {
+            runOnUiThread {
+                applyChrome(color)
+            }
+        }
     }
 
     private fun startDownload(url: String, filename: String) {
@@ -428,6 +446,17 @@ class MainActivity : AppCompatActivity() {
                 else notifySyncError()
             }
         }.start()
+    }
+
+    private fun applyChrome(color: String) {
+        val parsed = try {
+            Color.parseColor(color)
+        } catch (_: Exception) {
+            return
+        }
+        window.statusBarColor = parsed
+        window.navigationBarColor = parsed
+        webView.setBackgroundColor(parsed)
     }
 
     override fun onDestroy() {

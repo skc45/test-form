@@ -837,6 +837,95 @@ def clear_disk_session() -> None:
         path.unlink()
 
 
+SKIN_FIELDS = (
+    "skyTop",
+    "skyMid",
+    "skyDeep",
+    "glow",
+    "haze",
+    "ink",
+    "muted",
+    "accent",
+    "accentDeep",
+    "glass",
+)
+
+
+def skin_file() -> Path:
+    return cache_home() / "skin.json"
+
+
+def default_skin() -> dict:
+    return {
+        "id": "aero",
+        "name": "Aero sky",
+        "skyTop": "#7ec8f5",
+        "skyMid": "#3d8fd4",
+        "skyDeep": "#1c5fa8",
+        "glow": "#9fe7ff",
+        "haze": "#c8ffe4",
+        "ink": "#14324c",
+        "muted": "#3f6888",
+        "accent": "#4eb3f2",
+        "accentDeep": "#1f7fd4",
+        "glass": "#badcf8",
+        "sheen": 0.55,
+    }
+
+
+def parse_hex_color(value, fallback: str) -> str:
+    raw = str(value or "").strip()
+    if len(raw) == 7 and raw.startswith("#"):
+        try:
+            int(raw[1:], 16)
+            return raw.lower()
+        except ValueError:
+            return fallback
+    if len(raw) == 4 and raw.startswith("#"):
+        try:
+            int(raw[1:], 16)
+            return "#" + "".join(ch * 2 for ch in raw[1:].lower())
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def normalize_skin(data) -> dict:
+    base = default_skin()
+    if not isinstance(data, dict):
+        return base
+    out = dict(base)
+    for key in SKIN_FIELDS:
+        out[key] = parse_hex_color(data.get(key), base[key])
+    try:
+        sheen = float(data.get("sheen", base["sheen"]))
+    except (TypeError, ValueError):
+        sheen = base["sheen"]
+    out["sheen"] = max(0.0, min(1.0, sheen))
+    out["id"] = str(data.get("id") or "custom")[:32]
+    out["name"] = str(data.get("name") or "Custom")[:48]
+    return out
+
+
+def load_skin() -> dict:
+    path = skin_file()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return normalize_skin(data)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return default_skin()
+
+
+def save_skin(data) -> dict:
+    skin = normalize_skin(data)
+    path = skin_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(skin, indent=2) + "\n", encoding="utf-8")
+    return skin
+
+
 def remember_folder(folder: Path, photo_count: int | None = None) -> dict:
     payload = {
         "source": "folder",
@@ -987,6 +1076,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/sync":
             self._send_sync_pack()
             return
+        if parsed.path == "/api/skin":
+            self._send_json({"ok": True, **load_skin()})
+            return
         if parsed.path.startswith("/media/vault/"):
             self._send_vault_media(unquote(parsed.path[len("/media/vault/") :]))
             return
@@ -1035,6 +1127,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/sync/receive":
             self._receive_sync()
+            return
+        if parsed.path == "/api/skin":
+            self._send_json({"ok": True, **save_skin(self._read_json())})
             return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")

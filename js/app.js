@@ -1,6 +1,9 @@
 import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
 import * as cache from "./data.js";
 import * as chain from "./chain.js";
+import * as theme from "./theme.js";
+
+theme.bootSkin();
 
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|svg)$/i;
 
@@ -83,6 +86,11 @@ const els = {
   vaultInput: document.getElementById("vaultInput"),
   vaultFolderInput: document.getElementById("vaultFolderInput"),
   syncInput: document.getElementById("syncInput"),
+  themeBtn: document.getElementById("themeBtn"),
+  skinEditor: document.getElementById("skinEditor"),
+  skinSwatches: document.getElementById("skinSwatches"),
+  skinStatus: document.getElementById("skinStatus"),
+  skinSheen: document.getElementById("skinSheen"),
   app: document.getElementById("app"),
   brandKicker: document.querySelector(".brand-kicker"),
 };
@@ -1005,6 +1013,38 @@ async function loadFromApi() {
   }
 }
 
+function paintSkinEditor() {
+  const skin = theme.getSkin();
+  if (els.skinStatus) els.skinStatus.textContent = `${skin.name} · live`;
+  if (els.skinSwatches) {
+    els.skinSwatches.innerHTML = theme.PRESETS.map(
+      (item) => `
+      <button class="skin-swatch" type="button" data-skin-id="${item.id}" aria-pressed="${item.id === skin.id ? "true" : "false"}" style="${theme.swatchStyle(item)}" title="${item.name}">
+        <span>${item.name}</span>
+      </button>`
+    ).join("");
+  }
+  for (const input of els.skinEditor?.querySelectorAll("input[data-skin]") || []) {
+    input.value = skin[input.dataset.skin] || "#000000";
+  }
+  if (els.skinSheen) els.skinSheen.value = String(Math.round(skin.sheen * 100));
+}
+
+function openSkinEditor() {
+  if (!els.skinEditor) return;
+  paintSkinEditor();
+  els.skinEditor.hidden = false;
+}
+
+function closeSkinEditor() {
+  if (els.skinEditor) els.skinEditor.hidden = true;
+}
+
+function editSkin(patch) {
+  theme.applySkin(theme.patchSkin(theme.getSkin(), patch));
+  paintSkinEditor();
+}
+
 function onHash() {
   const match = location.hash.match(/^#photo\/(.+)$/);
   if (match) openViewer(decodeURIComponent(match[1]));
@@ -1018,11 +1058,25 @@ function onKey(event) {
     }
     return;
   }
+  if (els.skinEditor && !els.skinEditor.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSkinEditor();
+    }
+    return;
+  }
   if (els.chainLedger && !els.chainLedger.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
       closeChainLedger();
     }
+    return;
+  }
+  if (event.key === "t" || event.key === "T") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    if (els.skinEditor?.hidden === false) closeSkinEditor();
+    else openSkinEditor();
     return;
   }
   if (event.key === "b" || event.key === "B") {
@@ -2104,6 +2158,7 @@ async function wire() {
     renderCatalog();
   }
   paintCacheCard(await loadMergedSession());
+  await theme.restoreSkin();
   if (appMode && !fromApi && !fromCache) showOpener();
   else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
@@ -2170,6 +2225,27 @@ async function wire() {
     if (event.target === els.postForm) closePostForm();
   });
   els.chainBtn?.addEventListener("click", openChainLedger);
+  els.themeBtn?.addEventListener("click", openSkinEditor);
+  document.getElementById("skinClose")?.addEventListener("click", closeSkinEditor);
+  document.getElementById("skinReset")?.addEventListener("click", () => {
+    theme.applySkin(theme.defaultSkin());
+    paintSkinEditor();
+  });
+  els.skinSwatches?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-skin-id]");
+    if (!btn) return;
+    const preset = theme.presetById(btn.dataset.skinId);
+    if (!preset) return;
+    theme.applySkin(preset);
+    paintSkinEditor();
+  });
+  els.skinEditor?.querySelectorAll("input[data-skin]").forEach((input) => {
+    input.addEventListener("input", () => editSkin({ [input.dataset.skin]: input.value }));
+  });
+  els.skinSheen?.addEventListener("input", () => editSkin({ sheen: Number(els.skinSheen.value) / 100 }));
+  els.skinEditor?.addEventListener("click", (event) => {
+    if (event.target === els.skinEditor) closeSkinEditor();
+  });
   document.getElementById("chainClose")?.addEventListener("click", closeChainLedger);
   els.chainUnlock?.addEventListener("click", unlockBlockchainFolder);
   els.chainSend?.addEventListener("click", sendBlockchainSync);
@@ -2326,6 +2402,10 @@ async function wire() {
 function apertureHandleBack() {
   if (!els.help.hidden) {
     els.help.hidden = true;
+    return true;
+  }
+  if (els.skinEditor && !els.skinEditor.hidden) {
+    closeSkinEditor();
     return true;
   }
   if (els.chainLedger && !els.chainLedger.hidden) {

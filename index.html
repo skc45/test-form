@@ -43,6 +43,12 @@
               <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
             </label>
             <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
+            <button class="icon-btn" id="themeBtn" type="button" aria-label="Open skin editor" title="Skin editor">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
+              </svg>
+            </button>
             <button class="icon-btn" id="chainBtn" type="button" aria-label="Open blockchain monitor" title="Blockchain monitor">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="3" y="4" width="8" height="8" rx="1.6" />
@@ -159,6 +165,7 @@
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Send as a post</dd></div>
           <div><dt>B</dt><dd>Blockchain monitor</dd></div>
+          <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>Send sync</dt><dd>Share chain with another device</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
@@ -224,6 +231,29 @@
           <button class="text-btn" id="chainSend" type="button">Send sync</button>
           <button class="text-btn" id="chainReceive" type="button">Receive sync</button>
           <button class="text-btn" id="chainClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+    <div class="skin-editor" id="skinEditor" hidden>
+      <div class="skin-card">
+        <p class="help-kicker">Skin</p>
+        <h2>Theme editor</h2>
+        <p class="skin-status" id="skinStatus">Aero sky</p>
+        <div class="skin-swatches" id="skinSwatches"></div>
+        <div class="skin-fields" id="skinFields">
+          <label class="skin-field"><span>Sky top</span><input id="skinSkyTop" type="color" data-skin="skyTop" /></label>
+          <label class="skin-field"><span>Sky</span><input id="skinSkyMid" type="color" data-skin="skyMid" /></label>
+          <label class="skin-field"><span>Night</span><input id="skinSkyDeep" type="color" data-skin="skyDeep" /></label>
+          <label class="skin-field"><span>Glow</span><input id="skinGlow" type="color" data-skin="glow" /></label>
+          <label class="skin-field"><span>Haze</span><input id="skinHaze" type="color" data-skin="haze" /></label>
+          <label class="skin-field"><span>Ink</span><input id="skinInk" type="color" data-skin="ink" /></label>
+          <label class="skin-field"><span>Accent</span><input id="skinAccent" type="color" data-skin="accent" /></label>
+          <label class="skin-field"><span>Glass</span><input id="skinGlass" type="color" data-skin="glass" /></label>
+          <label class="skin-field"><span>Sheen</span><input id="skinSheen" type="range" min="0" max="100" value="55" /></label>
+        </div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="skinReset" type="button">Reset Aero</button>
+          <button class="text-btn" id="skinClose" type="button">Close</button>
         </div>
       </div>
     </div>

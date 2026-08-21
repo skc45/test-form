@@ -339,6 +339,37 @@ class CatalogStore(private val context: Context) {
         )
     }
 
+    fun skinResponse(): WebResourceResponse {
+        return json(loadSkinObject().put("ok", true))
+    }
+
+    fun loadSkin(): String {
+        val raw = prefs.getString(KEY_SKIN, "").orEmpty()
+        return raw.ifBlank { "{}" }
+    }
+
+    fun saveSkin(raw: String): JSONObject {
+        val data = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return JSONObject().put("ok", false)
+        }
+        if (data.optString("skyMid").isBlank() && data.optString("id").isBlank()) {
+            return JSONObject().put("ok", false)
+        }
+        prefs.edit().putString(KEY_SKIN, data.toString()).apply()
+        return data.put("ok", true)
+    }
+
+    private fun loadSkinObject(): JSONObject {
+        return try {
+            val raw = prefs.getString(KEY_SKIN, "").orEmpty()
+            if (raw.isBlank()) JSONObject() else JSONObject(raw)
+        } catch (_: Exception) {
+            JSONObject()
+        }
+    }
+
     fun chainAppend(title: String, caption: String, file: String, imageHash: String): JSONObject {
         val blocks = chainArray()
         val prev = blocks.getJSONObject(blocks.length() - 1)
@@ -1142,6 +1173,7 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val KEY_CHAIN = "chain"
+        private const val KEY_SKIN = "skin"
         private const val KEY_VAULT = "blockchainFolder"
         private const val KEY_VAULT_NAME = "blockchainFolderName"
         private const val MAX_RECENTS = 3

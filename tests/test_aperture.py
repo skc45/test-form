@@ -101,6 +101,9 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Send sync", body)
         self.assertIn(b"Receive sync", body)
         self.assertIn(b'id="syncInput"', body)
+        self.assertIn(b"Theme editor", body)
+        self.assertIn(b'id="skinEditor"', body)
+        self.assertIn(b'id="themeBtn"', body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -559,6 +562,56 @@ class ChainTests(unittest.TestCase):
             finally:
                 receiver.shutdown()
                 receiver.server_close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class SkinTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(Path(self.tmp.name) / "cache")
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old
+        self.tmp.cleanup()
+
+    def test_normalize_rejects_bad_hex_and_clamps_sheen(self):
+        skin = app.normalize_skin({"skyMid": "blue", "sheen": 4, "id": "midnight"})
+        self.assertEqual(skin["skyMid"], app.default_skin()["skyMid"])
+        self.assertEqual(skin["sheen"], 1.0)
+        self.assertEqual(skin["id"], "midnight")
+
+    def test_skin_http_roundtrip(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        server = app.run_server(photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/skin")
+            response = conn.getresponse()
+            payload = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(payload["id"], "aero")
+            self.assertEqual(payload["skyMid"], "#3d8fd4")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            body = json.dumps({**payload, "id": "sunset", "skyMid": "#e07858", "sheen": 0.4})
+            conn.request("POST", "/api/skin", body, {"Content-Type": "application/json"})
+            posted = conn.getresponse()
+            saved = json.loads(posted.read())
+            conn.close()
+            self.assertEqual(posted.status, 200)
+            self.assertEqual(saved["skyMid"], "#e07858")
+            self.assertEqual(app.load_skin()["skyMid"], "#e07858")
+            self.assertEqual(app.load_skin()["sheen"], 0.4)
         finally:
             server.shutdown()
             server.server_close()

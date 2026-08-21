@@ -80,6 +80,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 - Deep links: `#photo/solstice` opens that demo plate directly
 - Each local folder is auto-encoded onto a SHA-256 hash chain (difficulty 1). Open the **blockchain monitor** with the chain icon or **B**, then **Unlock folder** to decode `.apc` plates from the folder’s `blockchain/` vault
 - **Send sync** / **Receive sync** share the chain plus locked plates as an `.apsync` pack so another device can import, verify, and open the decoded catalog. Copying a `blockchain/` folder that includes `chain.json` also works
+- Open the **skin editor** with the sun icon or **T** to pick a preset (Aero, Midnight, Forest, Sunset, Graphite, Orchid, Honey) or mix sky, glass, and accent colors. The skin is saved in local cache and tints the Android status bar
 
 ## Shortcuts
 
@@ -87,6 +88,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 | --- | --- |
 | `O` | Open folder |
 | `B` | Blockchain monitor |
+| `T` | Skin editor |
 | `←` `→` | Previous / next |
 | `Space` | Slideshow |
 | `F` | Browser fullscreen |
