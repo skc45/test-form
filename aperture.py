@@ -11,7 +11,6 @@ Open a folder of photographs in the Aperture GUI:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import mimetypes
 import os
@@ -74,597 +73,14 @@ def session_file() -> Path:
     return cache_home() / "session.json"
 
 
-CHAIN_DIFFICULTY = 1
-GENESIS_PREV = "0" * 64
+SKIP_DIR_NAMES = {"blockchain"}
 
 
-def chain_file() -> Path:
-    return cache_home() / "chain.json"
-
-
-def sha256_hex(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def as_int(value, default: int = 0) -> int:
+def in_skip_dir(root: Path, path: Path) -> bool:
     try:
-        if value is None or value == "":
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def block_payload(block: dict) -> str:
-    return "|".join(
-        [
-            str(as_int(block.get("height"), 0)),
-            str(block.get("prevHash") or ""),
-            str(block.get("timestamp") or ""),
-            str(block.get("title") or ""),
-            str(block.get("caption") or ""),
-            str(block.get("file") or ""),
-            str(block.get("imageHash") or ""),
-            str(as_int(block.get("nonce"), 0)),
-        ]
-    )
-
-
-def hash_block(block: dict) -> str:
-    return sha256_hex(block_payload(block))
-
-
-def mine_block(block: dict, difficulty: int = CHAIN_DIFFICULTY) -> dict:
-    prefix = "0" * difficulty
-    nonce = as_int(block.get("nonce"), 0)
-    while True:
-        block["nonce"] = nonce
-        digest = hash_block(block)
-        if digest.startswith(prefix):
-            block["hash"] = digest
-            return block
-        nonce += 1
-
-
-def genesis_block() -> dict:
-    return mine_block(
-        {
-            "height": 0,
-            "timestamp": "1970-01-01T00:00:00",
-            "title": "Aperture",
-            "caption": "Genesis plate",
-            "file": "",
-            "imageHash": GENESIS_PREV,
-            "prevHash": GENESIS_PREV,
-            "nonce": 0,
-        }
-    )
-
-
-def chain_document(blocks: list[dict]) -> str:
-    return (
-        json.dumps(
-            {"v": 1, "kind": "aperture-sync", "difficulty": CHAIN_DIFFICULTY, "blocks": blocks},
-            indent=2,
-        )
-        + "\n"
-    )
-
-
-def parse_chain_document(data) -> list[dict] | None:
-    if isinstance(data, dict):
-        blocks = data.get("blocks")
-    elif isinstance(data, list):
-        blocks = data
-    else:
-        return None
-    if isinstance(blocks, list) and blocks:
-        return blocks
-    return None
-
-
-def save_chain(blocks: list[dict], mirrors: list[Path] | None = None) -> None:
-    text = chain_document(blocks)
-    path = chain_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    dests = [default_vault_dir(), *(mirrors or [])]
-    raw_vault = str(load_disk_session().get("blockchainFolder") or "").strip()
-    if raw_vault:
-        session_vault = Path(raw_vault).expanduser()
-        if session_vault.is_dir():
-            dests.append(session_vault)
-    seen: set[str] = set()
-    for folder in dests:
-        key = str(folder)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / "chain.json").write_text(text, encoding="utf-8")
-        except OSError:
-            continue
-
-
-def load_chain() -> list[dict]:
-    path = chain_file()
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            blocks = data.get("blocks") if isinstance(data, dict) else data
-            if isinstance(blocks, list) and blocks:
-                return blocks
-        except (OSError, json.JSONDecodeError):
-            pass
-    chain = [genesis_block()]
-    save_chain(chain)
-    return chain
-
-
-def verify_chain(blocks: list[dict] | None = None, difficulty: int = CHAIN_DIFFICULTY) -> bool:
-    chain = blocks if blocks is not None else load_chain()
-    if not chain:
-        return False
-    prefix = "0" * difficulty
-    for index, block in enumerate(chain):
-        digest = hash_block(block)
-        if digest != str(block.get("hash") or "") or not digest.startswith(prefix):
-            return False
-        if index == 0:
-            if as_int(block.get("height"), -1) != 0 or str(block.get("prevHash") or "") != GENESIS_PREV:
-                return False
-            continue
-        prev = chain[index - 1]
-        if as_int(block.get("height"), -1) != as_int(prev.get("height"), 0) + 1:
-            return False
-        if str(block.get("prevHash") or "") != str(prev.get("hash") or ""):
-            return False
-    return True
-
-
-def append_block(title: str, caption: str, filename: str, image_hash: str) -> dict:
-    chain = load_chain()
-    prev = chain[-1]
-    block = mine_block(
-        {
-            "height": as_int(prev.get("height"), 0) + 1,
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "title": title or "",
-            "caption": caption or "",
-            "file": filename or "",
-            "imageHash": image_hash or "",
-            "prevHash": str(prev.get("hash") or ""),
-            "nonce": 0,
-        }
-    )
-    chain.append(block)
-    save_chain(chain)
-    return block
-
-
-VAULT_MAGIC = b"APCH"
-SYNC_MAGIC = b"APSY"
-VAULT_EXT = ".apc"
-SYNC_EXT = ".apsync"
-VAULT_EXTS = {".apc", ".aplate"}
-VAULT_DIR_NAME = "blockchain"
-MAX_PLATE_BYTES = 25 * 1024 * 1024
-
-
-def default_vault_dir() -> Path:
-    path = cache_home() / "blockchain"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def remember_vault(folder: Path) -> Path:
-    resolved = folder.expanduser().resolve()
-    resolved.mkdir(parents=True, exist_ok=True)
-    save_disk_session({"blockchainFolder": str(resolved), "blockchainFolderName": resolved.name})
-    return resolved
-
-
-def load_vault_folder() -> Path:
-    raw = str(load_disk_session().get("blockchainFolder") or "").strip()
-    if raw:
-        folder = Path(raw).expanduser()
-        if folder.is_dir():
-            return folder.resolve()
-    return default_vault_dir()
-
-
-def vault_key(block: dict) -> bytes:
-    return hashlib.sha256(str(block.get("hash") or "").encode("utf-8")).digest()
-
-
-def xor_bytes(data: bytes, key: bytes) -> bytes:
-    if not key:
-        return data
-    return bytes(value ^ key[index % len(key)] for index, value in enumerate(data))
-
-
-def vault_filename(block: dict, filename: str) -> str:
-    height = as_int(block.get("height"), 0)
-    stem = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in Path(filename).stem) or "plate"
-    return f"{height:04d}-{stem}{VAULT_EXT}"
-
-
-def lock_bytes(plain: bytes, block: dict, filename: str, title: str, caption: str, mime: str) -> bytes:
-    header = json.dumps(
-        {
-            "v": 1,
-            "height": as_int(block.get("height"), 0),
-            "file": filename or "",
-            "title": title or "",
-            "caption": caption or "",
-            "imageHash": hashlib.sha256(plain).hexdigest(),
-            "mime": mime or "application/octet-stream",
-        },
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-    cipher = xor_bytes(plain, vault_key(block))
-    return VAULT_MAGIC + bytes([1]) + len(header).to_bytes(4, "big") + header + cipher
-
-
-def parse_envelope(data: bytes) -> tuple[dict, bytes] | None:
-    if len(data) < 9 or data[:4] != VAULT_MAGIC or data[4] != 1:
-        return None
-    size = int.from_bytes(data[5:9], "big")
-    if size < 2 or 9 + size > len(data):
-        return None
-    try:
-        header = json.loads(data[9 : 9 + size].decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(header, dict):
-        return None
-    return header, data[9 + size :]
-
-
-def block_at_height(blocks: list[dict], height: int) -> dict | None:
-    for block in blocks:
-        if as_int(block.get("height"), -1) == height:
-            return block
-    return None
-
-
-def unlock_bytes(data: bytes, blocks: list[dict] | None = None) -> tuple[dict, bytes] | None:
-    parsed = parse_envelope(data)
-    if not parsed:
-        return None
-    header, cipher = parsed
-    chain = blocks if blocks is not None else load_chain()
-    if not verify_chain(chain):
-        return None
-    block = block_at_height(chain, as_int(header.get("height"), -1))
-    if not block:
-        return None
-    plain = xor_bytes(cipher, vault_key(block))
-    if hashlib.sha256(plain).hexdigest() != str(header.get("imageHash") or ""):
-        return None
-    return header, plain
-
-
-def save_locked_plate(
-    plain: bytes,
-    block: dict,
-    filename: str,
-    title: str,
-    caption: str,
-    mime: str,
-    extra_dirs: list[Path] | None = None,
-) -> str:
-    packed = lock_bytes(plain, block, filename, title, caption, mime)
-    name = vault_filename(block, filename)
-    dests = [load_vault_folder(), *(extra_dirs or [])]
-    for folder in dests:
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / name).write_bytes(packed)
-        except OSError:
-            continue
-    return name
-
-
-def in_vault_dir(root: Path, path: Path) -> bool:
-    try:
-        return any(part.lower() == VAULT_DIR_NAME for part in path.relative_to(root.resolve()).parts)
+        return any(part.lower() in SKIP_DIR_NAMES for part in path.relative_to(root.resolve()).parts)
     except ValueError:
         return False
-
-
-def encode_image_path(path: Path, folder: Path, seen: set[str]) -> str | None:
-    if not is_image(path) or in_vault_dir(folder, path):
-        return None
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return None
-    if size <= 0 or size > MAX_PLATE_BYTES:
-        return None
-    try:
-        plain = path.read_bytes()
-    except OSError:
-        return None
-    image_hash = hashlib.sha256(plain).hexdigest()
-    if image_hash in seen:
-        return None
-    rel = path.relative_to(folder).as_posix() if path.is_relative_to(folder) else path.name
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    block = append_block(path.stem, folder.name, rel, image_hash)
-    seen.add(image_hash)
-    local_dir = folder / VAULT_DIR_NAME
-    return save_locked_plate(plain, block, rel, path.stem, folder.name, mime, extra_dirs=[local_dir])
-
-
-def encode_folders(folders: list[Path]) -> dict:
-    encoded: list[str] = []
-    skipped = 0
-    seen = {str(block.get("imageHash") or "") for block in load_chain() if str(block.get("imageHash") or "")}
-    for folder in folders:
-        if not folder.is_dir():
-            continue
-        root = folder.resolve()
-        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
-            if not is_image(path):
-                continue
-            name = encode_image_path(path, root, seen)
-            if name:
-                encoded.append(name)
-            else:
-                skipped += 1
-    payload = list_vault()
-    payload["encoded"] = len(encoded)
-    payload["skipped"] = skipped
-    payload["names"] = encoded
-    save_chain(load_chain(), [folder.resolve() / VAULT_DIR_NAME for folder in folders if folder.is_dir()])
-    return payload
-
-
-def find_vault_file(folder: Path, name: str) -> Path | None:
-    safe_name = Path(name).name
-    if not safe_name:
-        return None
-    direct = (folder / safe_name).resolve()
-    if direct.is_file() and safe_under(folder, direct):
-        return direct
-    if not folder.is_dir():
-        return None
-    for path in folder.rglob(safe_name):
-        resolved = path.resolve()
-        if resolved.is_file() and resolved.name == safe_name and safe_under(folder, resolved):
-            return resolved
-    return None
-
-
-def merge_chains(local: list[dict], remote: list[dict], prefer_remote: bool = False) -> list[dict]:
-    if remote and verify_chain(remote):
-        if not local or not verify_chain(local):
-            return remote
-        if str(local[0].get("hash") or "") == str(remote[0].get("hash") or ""):
-            shared = min(len(local), len(remote))
-            same_prefix = all(str(local[i].get("hash") or "") == str(remote[i].get("hash") or "") for i in range(shared))
-            if same_prefix:
-                return remote if len(remote) >= len(local) else local
-        if prefer_remote:
-            return remote
-    return local
-
-
-def import_chain_file(folder: Path, receive: bool = False) -> bool:
-    for candidate in (folder / "chain.json", folder / VAULT_DIR_NAME / "chain.json"):
-        if not candidate.is_file():
-            continue
-        try:
-            data = json.loads(candidate.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        blocks = parse_chain_document(data)
-        if not blocks or not verify_chain(blocks):
-            continue
-        mirrors = [folder]
-        if folder.name.lower() != VAULT_DIR_NAME:
-            mirrors.append(folder / VAULT_DIR_NAME)
-        save_chain(merge_chains(load_chain(), blocks, prefer_remote=receive), mirrors)
-        return True
-    return False
-
-
-def ingest_plates(folder: Path) -> int:
-    dest = load_vault_folder()
-    dest.mkdir(parents=True, exist_ok=True)
-    count = 0
-    if not folder.is_dir():
-        return 0
-    for path in sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if not is_vault_file(path):
-            continue
-        try:
-            (dest / path.name).write_bytes(path.read_bytes())
-            count += 1
-        except OSError:
-            continue
-    return count
-
-
-def collect_plates(folder: Path | None = None) -> list[tuple[str, bytes]]:
-    root = folder if folder is not None else load_vault_folder()
-    out: list[tuple[str, bytes]] = []
-    seen: set[str] = set()
-    if not root.is_dir():
-        return out
-    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if not is_vault_file(path) or path.name in seen:
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError:
-            continue
-        seen.add(path.name)
-        out.append((path.name, data))
-    return out
-
-
-def build_sync_pack(folder: Path | None = None) -> bytes:
-    plates = collect_plates(folder)
-    blocks = load_chain()
-    header = json.dumps(
-        {
-            "v": 1,
-            "kind": "aperture-sync",
-            "difficulty": CHAIN_DIFFICULTY,
-            "height": as_int(blocks[-1].get("height"), 0) if blocks else 0,
-            "blocks": blocks,
-            "files": [{"name": name, "size": len(data)} for name, data in plates],
-        },
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-    blob = b"".join(data for _name, data in plates)
-    return SYNC_MAGIC + bytes([1]) + len(header).to_bytes(4, "big") + header + blob
-
-
-def parse_sync_pack(data: bytes) -> tuple[list[dict], list[tuple[str, bytes]]] | None:
-    if len(data) < 9 or data[:4] != SYNC_MAGIC or data[4] != 1:
-        return None
-    size = int.from_bytes(data[5:9], "big")
-    if size < 2 or 9 + size > len(data):
-        return None
-    try:
-        header = json.loads(data[9 : 9 + size].decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(header, dict):
-        return None
-    blocks = parse_chain_document(header)
-    files = header.get("files")
-    if not blocks or not isinstance(files, list):
-        return None
-    cursor = 9 + size
-    plates: list[tuple[str, bytes]] = []
-    for item in files:
-        if not isinstance(item, dict):
-            return None
-        name = Path(str(item.get("name") or "")).name
-        length = as_int(item.get("size"), -1)
-        if not name or length < 0 or cursor + length > len(data):
-            return None
-        plates.append((name, data[cursor : cursor + length]))
-        cursor += length
-    return blocks, plates
-
-
-def receive_sync_pack(data: bytes) -> dict:
-    parsed = parse_sync_pack(data)
-    if not parsed:
-        return {"ok": False, "error": "undecodable"}
-    blocks, plates = parsed
-    if not verify_chain(blocks):
-        return {"ok": False, "error": "invalid chain"}
-    save_chain(merge_chains(load_chain(), blocks, prefer_remote=True))
-    dest = load_vault_folder()
-    dest.mkdir(parents=True, exist_ok=True)
-    for name, payload in plates:
-        try:
-            (dest / name).write_bytes(payload)
-        except OSError:
-            continue
-    listing = list_vault(dest)
-    listing["ok"] = True
-    listing["received"] = len(plates)
-    return listing
-
-
-def receive_sync_folder(folder: Path) -> dict:
-    root = folder.resolve()
-    import_chain_file(root, receive=True)
-    ingest_plates(root)
-    dest = load_vault_folder()
-    vault = dest
-    for candidate in (root, dest, root / VAULT_DIR_NAME):
-        if candidate.is_dir() and collect_plates(candidate):
-            vault = candidate
-            break
-    remember_vault(vault)
-    listing = list_vault(load_vault_folder())
-    listing["ok"] = True
-    return listing
-
-
-def is_vault_file(path: Path) -> bool:
-    if not path.is_file():
-        return False
-    if path.suffix.lower() in VAULT_EXTS:
-        return True
-    try:
-        with path.open("rb") as handle:
-            return handle.read(4) == VAULT_MAGIC
-    except OSError:
-        return False
-
-
-def vault_photo(name: str, header: dict, index: int = 0) -> dict:
-    src = "/media/vault/" + quote(name)
-    title = str(header.get("title") or Path(str(header.get("file") or name)).stem or "Plate")
-    return {
-        "id": f"vault/{name}",
-        "title": title,
-        "photographer": "Aperture chain",
-        "location": str(header.get("caption") or "Unlocked plate"),
-        "year": datetime.now().year,
-        "category": "blockchain",
-        "src": src,
-        "thumb": src,
-        "hero": src,
-        "local": True,
-        "featured": index == 0,
-        "height": as_int(header.get("height"), 0),
-    }
-
-
-def list_vault(folder: Path | None = None) -> dict:
-    root = folder if folder is not None else load_vault_folder()
-    import_chain_file(root, receive=False)
-    chain = load_chain()
-    valid = verify_chain(chain)
-    files: list[dict] = []
-    photos: list[dict] = []
-    if root.is_dir():
-        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
-            if not is_vault_file(path):
-                continue
-            try:
-                data = path.read_bytes()
-            except OSError:
-                continue
-            parsed = parse_envelope(data)
-            header = parsed[0] if parsed else {"file": path.name, "title": path.stem}
-            unlocked = unlock_bytes(data, chain) if valid else None
-            entry = {
-                "name": path.name,
-                "height": as_int(header.get("height"), 0),
-                "title": str(header.get("title") or Path(str(header.get("file") or path.name)).stem),
-                "caption": str(header.get("caption") or ""),
-                "file": str(header.get("file") or path.name),
-                "unlocked": bool(unlocked),
-                "src": "/media/vault/" + quote(path.name) if unlocked else "",
-                "error": "" if unlocked else ("locked" if parsed else "undecodable"),
-            }
-            files.append(entry)
-            if unlocked:
-                photos.append(vault_photo(path.name, unlocked[0], len(photos)))
-    return {
-        "ok": True,
-        "valid": valid,
-        "folder": root.name,
-        "path": str(root),
-        "height": as_int(chain[-1].get("height"), 0) if chain else 0,
-        "files": files,
-        "photos": photos,
-        "blocks": chain,
-    }
 
 
 def chrome_profile_dir() -> Path:
@@ -780,7 +196,7 @@ def images_in(folder: Path, limit: int = MAX_RECENT_SLIDES) -> list[Path]:
         return []
     found: list[Path] = []
     for path in sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if not is_image(path):
+        if in_skip_dir(folder, path) or not is_image(path):
             continue
         found.append(path)
         if len(found) >= limit:
@@ -953,10 +369,6 @@ def resolve_startup_folder(requested: Path | None) -> Path | None:
     return None
 
 
-def sync_pack_name() -> str:
-    return f"Aperture-{slug(str(load_disk_session().get('lastFolderName') or 'folder'))}{SYNC_EXT}"
-
-
 def slug(value: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (value or "folder"))
     parts = [part for part in cleaned.split("-") if part]
@@ -979,7 +391,7 @@ def scan_folder(folder: Path) -> list[dict]:
     root = folder.resolve()
     photos: list[dict] = []
     for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if in_vault_dir(root, path) or not is_image(path):
+        if in_skip_dir(root, path) or not is_image(path):
             continue
         rel = path.relative_to(root).as_posix()
         parent = path.parent.name if path.parent != root else root.name
@@ -1070,21 +482,8 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/recent-cover":
             self._send_recent_cover(parsed.query)
             return
-        if parsed.path == "/api/chain":
-            blocks = load_chain()
-            self._send_json({"ok": True, "valid": verify_chain(blocks), "blocks": blocks})
-            return
-        if parsed.path == "/api/vault":
-            self._send_json(list_vault())
-            return
-        if parsed.path == "/api/sync":
-            self._send_sync_pack()
-            return
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **load_skin()})
-            return
-        if parsed.path.startswith("/media/vault/"):
-            self._send_vault_media(unquote(parsed.path[len("/media/vault/") :]))
             return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
@@ -1095,42 +494,6 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/post":
             self._save_post()
-            return
-        if parsed.path == "/api/chain":
-            body = self._read_json()
-            block = append_block(
-                str(body.get("title") or ""),
-                str(body.get("caption") or ""),
-                str(body.get("file") or ""),
-                str(body.get("imageHash") or ""),
-            )
-            blocks = load_chain()
-            self._send_json({"ok": True, "valid": verify_chain(blocks), "block": block, "blocks": blocks})
-            return
-        if parsed.path == "/api/vault/open":
-            body = self._read_json()
-            folder = Path(str(body.get("path") or "")).expanduser()
-            if not folder.is_dir():
-                self.send_error(404, "Folder not found")
-                return
-            remember_vault(folder)
-            import_chain_file(folder.resolve(), receive=True)
-            ingest_plates(folder.resolve())
-            self._send_json(list_vault(folder.resolve()))
-            return
-        if parsed.path == "/api/vault/lock":
-            self._lock_vault_upload()
-            return
-        if parsed.path == "/api/vault/encode":
-            body = self._read_json()
-            folders = self._folders_from_body(body) or list(self.runtime.folders)
-            if not folders:
-                self.send_error(404, "Folder not found")
-                return
-            self._send_json(encode_folders(folders))
-            return
-        if parsed.path == "/api/sync/receive":
-            self._receive_sync()
             return
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **save_skin(self._read_json())})
@@ -1147,12 +510,6 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if len(folders) == 1:
             remember_folder(folders[0], len(photos))
         self.runtime.folders = folders
-        try:
-            for folder in folders:
-                import_chain_file(folder.resolve(), receive=False)
-            encode_folders(folders)
-        except OSError:
-            pass
         self._send_json(
             {
                 "ok": True,
@@ -1219,17 +576,11 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             "sentAt": datetime.now().isoformat(timespec="seconds"),
         }
         (posts / f"{stamp}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-        image_hash = hashlib.sha256(payload).hexdigest()
-        block = append_block(meta["title"], meta["caption"], image_path.name, image_hash)
-        vault_name = save_locked_plate(payload, block, image_path.name, meta["title"], meta["caption"], ctype)
         self._send_json(
             {
                 "ok": True,
                 "file": image_path.name,
                 "caption": meta["caption"],
-                "block": block,
-                "valid": verify_chain(),
-                "vault": vault_name,
             }
         )
 
@@ -1256,123 +607,6 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             else:
                 fields[str(name)] = payload.decode("utf-8", "replace")
         return fields, files
-
-    def _send_sync_pack(self) -> None:
-        data = build_sync_pack()
-        filename = sync_pack_name()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _receive_sync(self) -> None:
-        content_type = self.headers.get("Content-Type") or ""
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0 or length > 80 * 1024 * 1024:
-            self.send_error(400, "Invalid sync")
-            return
-        raw = self.rfile.read(length)
-        if "multipart/form-data" in content_type:
-            fields, files = self._parse_multipart(content_type, raw)
-            pack = files.get("pack") or files.get("sync") or files.get("file")
-            if pack and pack[1]:
-                result = receive_sync_pack(pack[1])
-                if not result.get("ok"):
-                    self.send_error(400, str(result.get("error") or "Invalid sync"))
-                    return
-                self._send_json(result)
-                return
-            path = fields.get("path") or ""
-            folder = Path(path).expanduser() if path else None
-            if folder and folder.is_dir():
-                self._send_json(receive_sync_folder(folder))
-                return
-            self.send_error(400, "Missing pack")
-            return
-        if raw[:4] == SYNC_MAGIC:
-            result = receive_sync_pack(raw)
-            if not result.get("ok"):
-                self.send_error(400, str(result.get("error") or "Invalid sync"))
-                return
-            self._send_json(result)
-            return
-        try:
-            body = json.loads(raw.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            body = {}
-        path = str(body.get("path") or "").strip() if isinstance(body, dict) else ""
-        folder = Path(path).expanduser() if path else None
-        if folder and folder.is_dir():
-            self._send_json(receive_sync_folder(folder))
-            return
-        self.send_error(400, "Invalid sync")
-
-    def _lock_vault_upload(self) -> None:
-        content_type = self.headers.get("Content-Type") or ""
-        if "multipart/form-data" not in content_type:
-            self.send_error(400, "Expected multipart form")
-            return
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0 or length > 25 * 1024 * 1024:
-            self.send_error(400, "Invalid plate")
-            return
-        fields, files = self._parse_multipart(content_type, self.rfile.read(length))
-        plate = files.get("plate") or files.get("file")
-        if not plate or not plate[1]:
-            self.send_error(400, "Missing plate")
-            return
-        filename, payload, ctype = plate
-        chain = load_chain()
-        block = chain[-1] if chain else genesis_block()
-        name = save_locked_plate(
-            payload,
-            block,
-            filename,
-            fields.get("title") or "",
-            fields.get("caption") or "",
-            ctype,
-        )
-        payload_out = list_vault()
-        payload_out["vault"] = name
-        payload_out["block"] = block
-        self._send_json(payload_out)
-
-    def _send_vault_media(self, rel: str) -> None:
-        folder = load_vault_folder()
-        name = Path(rel).name
-        path = find_vault_file(folder, name)
-        if not path:
-            for extra in self.runtime.folders:
-                path = find_vault_file(extra / VAULT_DIR_NAME, name) or find_vault_file(extra, name)
-                if path:
-                    break
-        if not path:
-            self.send_error(404, "Not found")
-            return
-        try:
-            unlocked = unlock_bytes(path.read_bytes())
-        except OSError:
-            unlocked = None
-        if not unlocked:
-            self.send_error(404, "Locked")
-            return
-        header, plain = unlocked
-        ctype = str(header.get("mime") or mimetypes.guess_type(str(header.get("file") or name))[0] or "application/octet-stream")
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(plain)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(plain)
 
     def _read_json(self) -> dict:
         try:

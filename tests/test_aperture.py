@@ -95,14 +95,11 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Tap to download", body)
         self.assertIn(b'id="postForm"', body)
         self.assertIn(b"New post", body)
-        self.assertIn(b'id="chainLedger"', body)
-        self.assertIn(b"Unlock folder", body)
-        self.assertIn(b"Send this folder", body)
-        self.assertIn(b"Send folder", body)
-        self.assertIn(b"Receive folder", body)
-        self.assertIn(b'id="sendBar"', body)
-        self.assertIn(b'id="openerReceiveBtn"', body)
-        self.assertIn(b'id="syncInput"', body)
+        self.assertNotIn(b'id="chainLedger"', body)
+        self.assertNotIn(b"Send folder", body)
+        self.assertNotIn(b"Receive folder", body)
+        self.assertNotIn(b'id="sendBar"', body)
+        self.assertNotIn(b'id="syncInput"', body)
         self.assertIn(b"Theme editor", body)
         self.assertIn(b'id="skinEditor"', body)
         self.assertIn(b'id="themeBtn"', body)
@@ -142,77 +139,15 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(meta["caption"], "Golden hour")
         self.assertEqual(meta["title"], "Ridge")
         self.assertEqual(meta["file"], data["file"])
-        self.assertTrue(data["block"]["hash"].startswith("0" * app.CHAIN_DIFFICULTY))
-        self.assertEqual(data["block"]["height"], 1)
-        self.assertTrue(data["valid"])
-        vault = app.cache_home() / "blockchain" / data["vault"]
-        self.assertTrue(vault.is_file())
-        unlocked = app.unlock_bytes(vault.read_bytes())
-        self.assertIsNotNone(unlocked)
-        self.assertEqual(unlocked[1], TINY_PNG)
+        self.assertNotIn("block", data)
+        self.assertNotIn("vault", data)
 
-    def test_chain_endpoint_lists_blocks(self):
-        conn = HTTPConnection(self.host, self.port, timeout=5)
-        conn.request("GET", "/api/chain")
-        response = conn.getresponse()
-        payload = json.loads(response.read())
-        conn.close()
-        self.assertEqual(response.status, 200)
-        self.assertTrue(payload["ok"])
-        self.assertTrue(payload["valid"])
-        self.assertGreaterEqual(len(payload["blocks"]), 1)
-        self.assertEqual(payload["blocks"][0]["title"], "Aperture")
-
-        conn = HTTPConnection(self.host, self.port, timeout=5)
-        body = json.dumps({"title": "Ridge", "caption": "On chain", "file": "ridge.png", "imageHash": "abc"})
-        conn.request("POST", "/api/chain", body, {"Content-Type": "application/json"})
-        posted = json.loads(conn.getresponse().read())
-        conn.close()
-        self.assertTrue(posted["ok"])
-        self.assertEqual(posted["block"]["caption"], "On chain")
-        self.assertTrue(posted["valid"])
-
-    def test_vault_lists_and_serves_unlocked_plate(self):
-        self.test_post_saves_plate_and_caption()
-        conn = HTTPConnection(self.host, self.port, timeout=5)
-        conn.request("GET", "/api/vault")
-        payload = json.loads(conn.getresponse().read())
-        conn.close()
-        self.assertTrue(payload["ok"])
-        self.assertTrue(payload["valid"])
-        self.assertGreaterEqual(len(payload["files"]), 1)
-        self.assertTrue(payload["files"][0]["unlocked"])
-        self.assertGreaterEqual(len(payload["photos"]), 1)
-        name = payload["files"][0]["name"]
-        status, ctype, body = self._get("/media/vault/" + name)
-        self.assertEqual(status, 200)
-        self.assertTrue(ctype.startswith("image/"))
-        self.assertEqual(body, TINY_PNG)
-
-    def test_vault_encode_endpoint_seals_open_folder(self):
-        conn = HTTPConnection(self.host, self.port, timeout=5)
-        conn.request(
-            "POST",
-            "/api/vault/encode",
-            json.dumps({"path": str(self.root)}),
-            {"Content-Type": "application/json"},
-        )
-        payload = json.loads(conn.getresponse().read())
-        conn.close()
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["encoded"], 1)
-        self.assertTrue((self.root / "blockchain").is_dir())
-        self.assertTrue(any((self.root / "blockchain").glob("*.apc")))
-        again = HTTPConnection(self.host, self.port, timeout=5)
-        again.request(
-            "POST",
-            "/api/vault/encode",
-            json.dumps({"path": str(self.root)}),
-            {"Content-Type": "application/json"},
-        )
-        repeated = json.loads(again.getresponse().read())
-        again.close()
-        self.assertEqual(repeated["encoded"], 0)
+    def test_scan_skips_leftover_blockchain_dir(self):
+        vault = self.root / "blockchain"
+        vault.mkdir()
+        (vault / "hidden.png").write_bytes(TINY_PNG)
+        photos = app.scan_folder(self.root)
+        self.assertEqual([photo["id"] for photo in photos], ["plate.png"])
 
 
 class CacheTests(unittest.TestCase):
@@ -412,158 +347,6 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertTrue(body["cleared"])
             self.assertEqual(app.load_disk_session(), {})
-        finally:
-            server.shutdown()
-            server.server_close()
-
-
-class ChainTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.old = os.environ.get("APERTURE_CACHE_DIR")
-        os.environ["APERTURE_CACHE_DIR"] = str(Path(self.tmp.name) / "cache")
-
-    def tearDown(self):
-        if self.old is None:
-            os.environ.pop("APERTURE_CACHE_DIR", None)
-        else:
-            os.environ["APERTURE_CACHE_DIR"] = self.old
-        self.tmp.cleanup()
-
-    def test_chain_links_and_rejects_tamper(self):
-        genesis = app.genesis_block()
-        self.assertTrue(genesis["hash"].startswith("0" * app.CHAIN_DIFFICULTY))
-        self.assertTrue(app.verify_chain([genesis]))
-        block = app.append_block("Ridge", "Golden hour", "ridge.png", "abc123")
-        loaded = app.load_chain()
-        self.assertEqual(len(loaded), 2)
-        self.assertEqual(loaded[-1]["hash"], block["hash"])
-        self.assertEqual(loaded[-1]["prevHash"], loaded[0]["hash"])
-        self.assertTrue(app.verify_chain(loaded))
-        loaded[-1]["caption"] = "tampered"
-        self.assertFalse(app.verify_chain(loaded))
-
-    def test_vault_decodes_with_chain_and_rejects_tamper(self):
-        block = app.append_block("Ridge", "Golden hour", "ridge.png", "abc123")
-        packed = app.lock_bytes(TINY_PNG, block, "ridge.png", "Ridge", "Golden hour", "image/png")
-        self.assertTrue(packed.startswith(app.VAULT_MAGIC))
-        unlocked = app.unlock_bytes(packed)
-        self.assertIsNotNone(unlocked)
-        self.assertEqual(unlocked[1], TINY_PNG)
-        self.assertEqual(unlocked[0]["title"], "Ridge")
-        folder = app.remember_vault(Path(self.tmp.name) / "vault")
-        name = app.vault_filename(block, "ridge.png")
-        (folder / name).write_bytes(packed)
-        listing = app.list_vault(folder)
-        self.assertTrue(listing["valid"])
-        self.assertEqual(listing["files"][0]["unlocked"], True)
-        chain = app.load_chain()
-        chain[-1]["caption"] = "tampered"
-        app.save_chain(chain)
-        self.assertIsNone(app.unlock_bytes(packed))
-        listing = app.list_vault(folder)
-        self.assertFalse(listing["valid"])
-        self.assertFalse(listing["files"][0]["unlocked"])
-
-    def test_encodes_local_folder_cheaply_and_skips_duplicates(self):
-        self.assertEqual(app.CHAIN_DIFFICULTY, 1)
-        photos = Path(self.tmp.name) / "album"
-        photos.mkdir()
-        (photos / "keep.png").write_bytes(TINY_PNG)
-        first = app.encode_folders([photos])
-        self.assertEqual(first["encoded"], 1)
-        self.assertTrue(first["valid"])
-        sidecars = list((photos / "blockchain").glob("*.apc"))
-        self.assertEqual(len(sidecars), 1)
-        unlocked = app.unlock_bytes(sidecars[0].read_bytes())
-        self.assertIsNotNone(unlocked)
-        self.assertEqual(unlocked[1], TINY_PNG)
-        second = app.encode_folders([photos])
-        self.assertEqual(second["encoded"], 0)
-        self.assertGreaterEqual(second["skipped"], 1)
-        self.assertTrue((photos / "blockchain" / "chain.json").is_file())
-
-    def test_sync_pack_unlocks_on_another_device(self):
-        photos = Path(self.tmp.name) / "album"
-        photos.mkdir()
-        (photos / "keep.png").write_bytes(TINY_PNG)
-        encoded = app.encode_folders([photos])
-        self.assertEqual(encoded["encoded"], 1)
-        pack = app.build_sync_pack()
-        self.assertTrue(pack.startswith(app.SYNC_MAGIC))
-        parsed = app.parse_sync_pack(pack)
-        self.assertIsNotNone(parsed)
-        sender = app.load_chain()
-        other = Path(self.tmp.name) / "other-cache"
-        os.environ["APERTURE_CACHE_DIR"] = str(other)
-        received = app.receive_sync_pack(pack)
-        self.assertTrue(received["ok"])
-        self.assertTrue(received["valid"])
-        self.assertEqual(received["received"], 1)
-        self.assertTrue(received["files"][0]["unlocked"])
-        dest = app.load_vault_folder() / received["files"][0]["name"]
-        unlocked = app.unlock_bytes(dest.read_bytes())
-        self.assertIsNotNone(unlocked)
-        self.assertEqual(unlocked[1], TINY_PNG)
-        self.assertEqual([block["hash"] for block in app.load_chain()], [block["hash"] for block in sender])
-
-    def test_copied_blockchain_folder_imports_chain(self):
-        photos = Path(self.tmp.name) / "album"
-        photos.mkdir()
-        (photos / "keep.png").write_bytes(TINY_PNG)
-        app.encode_folders([photos])
-        sidecar = photos / "blockchain"
-        other = Path(self.tmp.name) / "other-cache"
-        os.environ["APERTURE_CACHE_DIR"] = str(other)
-        listing = app.receive_sync_folder(sidecar)
-        self.assertTrue(listing["ok"])
-        self.assertTrue(listing["valid"])
-        self.assertTrue(any(item["unlocked"] for item in listing["files"]))
-        longer = app.load_chain()
-        shorter = longer[:1]
-        merged = app.merge_chains(shorter, longer)
-        self.assertEqual(len(merged), len(longer))
-        self.assertEqual(app.merge_chains(longer, shorter), longer)
-
-    def test_sync_http_roundtrip(self):
-        photos = Path(self.tmp.name) / "album"
-        photos.mkdir()
-        (photos / "keep.png").write_bytes(TINY_PNG)
-        app.encode_folders([photos])
-        server = app.run_server(photos, 0)
-        host, port = server.server_address
-        try:
-            conn = HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/api/sync")
-            response = conn.getresponse()
-            pack = response.read()
-            conn.close()
-            self.assertEqual(response.status, 200)
-            self.assertTrue(pack.startswith(b"APSY"))
-
-            other = Path(self.tmp.name) / "http-other"
-            os.environ["APERTURE_CACHE_DIR"] = str(other)
-            receiver = app.run_server(photos, 0)
-            rhost, rport = receiver.server_address
-            try:
-                conn = HTTPConnection(rhost, rport, timeout=5)
-                conn.request(
-                    "POST",
-                    "/api/sync/receive",
-                    pack,
-                    {"Content-Type": "application/octet-stream"},
-                )
-                posted = conn.getresponse()
-                data = json.loads(posted.read())
-                conn.close()
-                self.assertEqual(posted.status, 200)
-                self.assertTrue(data["ok"])
-                self.assertTrue(data["valid"])
-                self.assertGreaterEqual(data["received"], 1)
-                self.assertTrue(data["files"][0]["unlocked"])
-            finally:
-                receiver.shutdown()
-                receiver.server_close()
         finally:
             server.shutdown()
             server.server_close()

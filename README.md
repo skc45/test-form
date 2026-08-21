@@ -78,7 +78,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 - Category filters from subfolders, plus search
 - Full-screen viewer with fit/fill, zoom, pan, slideshow, and a filmstrip
 - Deep links: `#photo/solstice` opens that demo plate directly
-- Each local folder is sealed on a SHA-256 chain automatically. Tap **Send this folder** (or **S**) to share one file. On the other device tap **Receive folder** (or **R**) — Aperture verifies the chain and opens the photos
+- Catalog is two plates wide in masonry and grid
 - Open the **skin editor** with the sun icon or **T** to pick a preset (Aero, Midnight, Forest, Sunset, Graphite, Orchid, Honey) or mix sky, glass, and accent colors. The skin is saved in local cache and tints the Android status bar
 
 ## Shortcuts
@@ -86,9 +86,6 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 | Key | Action |
 | --- | --- |
 | `O` | Open folder |
-| `S` | Send this folder |
-| `R` | Receive folder |
-| `B` | Send sheet |
 | `T` | Skin editor |
 | `←` `→` | Previous / next |
 | `Space` | Slideshow |
