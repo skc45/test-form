@@ -79,6 +79,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 - Full-screen viewer with fit/fill, zoom, pan, slideshow, and a filmstrip
 - Deep links: `#photo/solstice` opens that demo plate directly
 - Catalog is two plates wide in masonry and grid
+- **XRP cipher** seals each photograph and encodes its fingerprint as an XRPL memo onto a classic `r…` address. Open it with the ripple icon or **X**, then Encode catalog / Encode this plate
 - Open the **skin editor** with the sun icon or **T** to pick a preset (Aero, Midnight, Forest, Sunset, Graphite, Orchid, Honey) or mix sky, glass, and accent colors. The skin is saved in local cache and tints the Android status bar
 
 ## Shortcuts
@@ -86,6 +87,7 @@ Then visit [http://localhost:8080](http://localhost:8080) and click **Open folde
 | Key | Action |
 | --- | --- |
 | `O` | Open folder |
+| `X` | Encode onto XRP |
 | `T` | Skin editor |
 | `←` `→` | Previous / next |
 | `Space` | Slideshow |

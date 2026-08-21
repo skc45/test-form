@@ -16,11 +16,16 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.math.BigInteger
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Calendar
 import java.util.Locale
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 class CatalogStore(private val context: Context) {
     private val prefs: SharedPreferences =
@@ -359,6 +364,225 @@ class CatalogStore(private val context: Context) {
         }
     }
 
+    fun xrpResponse(): WebResourceResponse {
+        return json(xrpLedger())
+    }
+
+    fun xrpLedger(): JSONObject {
+        val plates = xrpPlates()
+        return JSONObject()
+            .put("ok", true)
+            .put("catalogAddress", catalogXrpAddress())
+            .put("count", plates.length())
+            .put("plates", plates)
+    }
+
+    fun xrpEncode(url: String, filename: String, title: String): JSONObject {
+        val dest = File(context.cacheDir, "xrp-in/${filename.substringAfterLast('/').ifBlank { "plate.jpg" }}")
+        dest.parentFile?.mkdirs()
+        if (!exportToFile(url, dest) { }) return JSONObject().put("ok", false)
+        val bytes = dest.readBytes()
+        return encodeXrpPlate(bytes, title.ifBlank { dest.nameWithoutExtension }, dest.name, mimeFor(dest.name))
+    }
+
+    fun xrpEncodeFolder(): JSONObject {
+        var encoded = 0
+        var skipped = 0
+        media.values.forEach { entry ->
+            val bytes = readUriBytes(entry.first) ?: run {
+                skipped += 1
+                return@forEach
+            }
+            if (bytes.isEmpty() || bytes.size > XRP_MAX_PLATE) {
+                skipped += 1
+                return@forEach
+            }
+            val name = DocumentFile.fromSingleUri(context, entry.first)?.name ?: "plate.jpg"
+            val result = encodeXrpPlate(bytes, name.substringBeforeLast('.'), name, entry.second)
+            if (result.optBoolean("ok")) encoded += 1 else skipped += 1
+        }
+        return xrpLedger().put("encoded", encoded).put("skipped", skipped)
+    }
+
+    fun writeXrpLedgerFile(): File {
+        val dest = File(context.cacheDir, "share/Aperture-xrp.json")
+        dest.parentFile?.mkdirs()
+        dest.writeText(xrpLedger().toString())
+        return dest
+    }
+
+    private fun encodeXrpPlate(plain: ByteArray, title: String, filename: String, mime: String): JSONObject {
+        if (plain.isEmpty() || plain.size > XRP_MAX_PLATE) return JSONObject().put("ok", false)
+        val secret = xrpSecret()
+        val nonce = ByteArray(XRP_NONCE)
+        SecureRandom().nextBytes(nonce)
+        val imageHash = sha256(plain)
+        val key = sha256(secret + nonce + imageHash)
+        val cipher = xorSeal(plain, key)
+        val tag = hmacSha256(sha256(XRP_LABEL + secret), nonce + imageHash + cipher)
+        val envelope = XRP_MAGIC + byteArrayOf(XRP_VERSION) + nonce + imageHash + tag + cipher
+        val address = plateXrpAddress(imageHash, secret)
+        val catalog = catalogXrpAddress(secret)
+        val cert = JSONObject()
+            .put("v", 1)
+            .put("kind", "aperture-xrp")
+            .put("ledger", "xrpl")
+            .put("title", title.ifBlank { "Plate" })
+            .put("file", filename)
+            .put("mime", mime.ifBlank { mimeFor(filename) })
+            .put("imageHash", toHex(imageHash))
+            .put("cipherHash", toHex(sha256(cipher)))
+            .put("address", address)
+            .put("tag", toHex(tag))
+            .put("encodedAt", java.time.Instant.now().toString().take(19))
+        val memoData = toHex(stableCertJson(cert).toByteArray(StandardCharsets.UTF_8))
+        val memoType = toHex(XRP_MEMO_TYPE.toByteArray(StandardCharsets.UTF_8))
+        val memoFormat = toHex("application/json".toByteArray(StandardCharsets.UTF_8))
+        cert.put("memoType", memoType)
+        cert.put("memoFormat", memoFormat)
+        cert.put("memoData", memoData)
+        cert.put(
+            "tx",
+            JSONObject()
+                .put("TransactionType", "Payment")
+                .put("Account", catalog)
+                .put("Destination", address)
+                .put("Amount", "1")
+                .put(
+                    "Memos",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "Memo",
+                            JSONObject()
+                                .put("MemoType", memoType)
+                                .put("MemoFormat", memoFormat)
+                                .put("MemoData", memoData),
+                        ),
+                    ),
+                ),
+        )
+        val vault = File(xrpVaultDir(), "$address.apxr")
+        vault.writeBytes(envelope)
+        rememberXrpCertificate(cert)
+        return JSONObject()
+            .put("ok", true)
+            .put("certificate", cert)
+            .put("address", address)
+            .put("catalogAddress", catalog)
+            .put("vault", vault.name)
+    }
+
+    private fun stableCertJson(cert: JSONObject): String {
+        val keys = cert.keys().asSequence().sorted().toList()
+        val ordered = JSONObject()
+        for (key in keys) ordered.put(key, cert.get(key))
+        return ordered.toString()
+    }
+
+    private fun rememberXrpCertificate(cert: JSONObject) {
+        val plates = xrpPlates()
+        val digest = cert.optString("imageHash")
+        val next = JSONArray()
+        next.put(cert)
+        for (i in 0 until plates.length()) {
+            val item = plates.getJSONObject(i)
+            if (item.optString("imageHash") == digest) continue
+            next.put(item)
+            if (next.length() >= 80) break
+        }
+        prefs.edit().putString(KEY_XRP, next.toString()).apply()
+    }
+
+    private fun xrpPlates(): JSONArray {
+        val raw = prefs.getString(KEY_XRP, "").orEmpty()
+        if (raw.isBlank()) return JSONArray()
+        return try {
+            JSONArray(raw)
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private fun xrpSecret(): ByteArray {
+        val raw = prefs.getString(KEY_XRP_SECRET, "").orEmpty()
+        if (raw.length == 64) {
+            return hexToBytes(raw)
+        }
+        val secret = ByteArray(32)
+        SecureRandom().nextBytes(secret)
+        prefs.edit().putString(KEY_XRP_SECRET, toHex(secret).lowercase()).apply()
+        return secret
+    }
+
+    private fun catalogXrpAddress(secret: ByteArray = xrpSecret()): String {
+        return classicXrpAddress(sha256(XRP_CATALOG + secret).copyOf(20))
+    }
+
+    private fun plateXrpAddress(imageHash: ByteArray, secret: ByteArray): String {
+        return classicXrpAddress(sha256(imageHash + XRP_PLATE + secret).copyOf(20))
+    }
+
+    private fun classicXrpAddress(payload20: ByteArray): String {
+        val versioned = byteArrayOf(0) + payload20.copyOf(20)
+        val check = sha256(sha256(versioned)).copyOf(4)
+        return b58encode(versioned + check)
+    }
+
+    private fun b58encode(data: ByteArray): String {
+        var zeros = 0
+        for (byte in data) {
+            if (byte == 0.toByte()) zeros += 1 else break
+        }
+        var number = BigInteger(1, data)
+        val chars = StringBuilder()
+        val base = BigInteger.valueOf(58)
+        if (number == BigInteger.ZERO) chars.append(XRP_ALPHABET[0])
+        while (number > BigInteger.ZERO) {
+            val div = number.divideAndRemainder(base)
+            number = div[0]
+            chars.append(XRP_ALPHABET[div[1].toInt()])
+        }
+        return XRP_ALPHABET[0].toString().repeat(zeros) + chars.reverse().toString()
+    }
+
+    private fun xorSeal(plain: ByteArray, key: ByteArray): ByteArray {
+        if (key.isEmpty()) return plain
+        return ByteArray(plain.size) { index -> (plain[index].toInt() xor key[index % key.size].toInt()).toByte() }
+    }
+
+    private fun sha256(data: ByteArray): ByteArray {
+        return MessageDigest.getInstance("SHA-256").digest(data)
+    }
+
+    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key, "HmacSHA256"))
+        return mac.doFinal(data)
+    }
+
+    private fun toHex(data: ByteArray): String {
+        return data.joinToString("") { byte -> "%02X".format(byte) }
+    }
+
+    private fun hexToBytes(value: String): ByteArray {
+        val hex = value.replace(Regex("[^0-9A-Fa-f]"), "")
+        return ByteArray(hex.length / 2) { index -> hex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
+    }
+
+    private fun xrpVaultDir(): File {
+        val dir = File(context.filesDir, "xrp")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun readUriBytes(uri: Uri): ByteArray? {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun hasPermission(uri: Uri): Boolean {
         return context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
     }
@@ -551,8 +775,19 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val KEY_SKIN = "skin"
+        private const val KEY_XRP = "xrpLedger"
+        private const val KEY_XRP_SECRET = "xrpSecret"
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
+        private const val XRP_VERSION: Byte = 1
+        private const val XRP_NONCE = 16
+        private const val XRP_MAX_PLATE = 25 * 1024 * 1024
+        private const val XRP_MEMO_TYPE = "aperture/xrp"
+        private val XRP_MAGIC = byteArrayOf(0x41, 0x50, 0x58, 0x52)
+        private val XRP_LABEL = "aperture-xrp-cipher-v1".toByteArray(StandardCharsets.UTF_8)
+        private val XRP_PLATE = "xrpl-plate".toByteArray(StandardCharsets.UTF_8)
+        private val XRP_CATALOG = "xrpl-catalog".toByteArray(StandardCharsets.UTF_8)
+        private const val XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
         private val IMAGE_EXT = setOf(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "svg", "heic", "heif",
         )

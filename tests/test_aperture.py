@@ -103,6 +103,9 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Theme editor", body)
         self.assertIn(b'id="skinEditor"', body)
         self.assertIn(b'id="themeBtn"', body)
+        self.assertIn(b'id="xrpLedger"', body)
+        self.assertIn(b"Encode onto XRP", body)
+        self.assertIn(b'id="xrpBar"', body)
 
     def test_post_saves_plate_and_caption(self):
         boundary = "----ApertureBoundary7"
@@ -397,6 +400,93 @@ class SkinTests(unittest.TestCase):
             self.assertEqual(saved["skyMid"], "#e07858")
             self.assertEqual(app.load_skin()["skyMid"], "#e07858")
             self.assertEqual(app.load_skin()["sheen"], 0.4)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class XrpCipherTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(Path(self.tmp.name) / "cache")
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old
+        self.tmp.cleanup()
+
+    def test_seal_roundtrip_and_classic_address(self):
+        result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
+        self.assertTrue(result["ok"])
+        address = result["address"]
+        self.assertTrue(address.startswith("r"))
+        self.assertGreaterEqual(len(address), 25)
+        self.assertTrue(all(ch in app.XRP_ALPHABET for ch in address))
+        cert = result["certificate"]
+        self.assertEqual(cert["kind"], "aperture-xrp")
+        self.assertEqual(cert["tx"]["Destination"], address)
+        self.assertEqual(cert["tx"]["Account"], result["catalogAddress"])
+        self.assertTrue(cert["memoData"])
+        vault = app.xrp_vault_dir() / result["vault"]
+        self.assertTrue(vault.is_file())
+        self.assertTrue(vault.read_bytes().startswith(app.XRP_MAGIC))
+        unlocked = app.decode_plate(vault.read_bytes())
+        self.assertIsNotNone(unlocked)
+        self.assertEqual(unlocked[1], TINY_PNG)
+        listing = app.list_xrp()
+        self.assertEqual(listing["count"], 1)
+        self.assertEqual(listing["plates"][0]["address"], address)
+
+    def test_tamper_rejects_decode(self):
+        result = app.encode_plate(TINY_PNG, "Ridge", "ridge.png", "image/png")
+        packed = (app.xrp_vault_dir() / result["vault"]).read_bytes()
+        mutated = packed[:-1] + bytes([packed[-1] ^ 1])
+        self.assertIsNone(app.decode_plate(mutated))
+
+    def test_xrp_http_encodes_plate(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        server = app.run_server(photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/xrp")
+            listed = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertTrue(listed["ok"])
+            self.assertTrue(listed["catalogAddress"].startswith("r"))
+
+            boundary = "----ApertureXrp7"
+            payload = (
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="title"\r\n\r\n'
+                "Ridge\r\n"
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="plate"; filename="ridge.png"\r\n'
+                "Content-Type: image/png\r\n\r\n"
+            ).encode("utf-8") + TINY_PNG + f"\r\n--{boundary}--\r\n".encode("utf-8")
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request(
+                "POST",
+                "/api/xrp",
+                payload,
+                {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+            posted = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertTrue(posted["ok"])
+            self.assertTrue(posted["address"].startswith("r"))
+            self.assertEqual(posted["certificate"]["title"], "Ridge")
+
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("POST", "/api/xrp", json.dumps({"path": str(photos)}), {"Content-Type": "application/json"})
+            foldered = json.loads(conn.getresponse().read())
+            conn.close()
+            self.assertGreaterEqual(foldered["count"], 1)
         finally:
             server.shutdown()
             server.server_close()

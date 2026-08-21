@@ -1,6 +1,7 @@
 import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plateNumber } from "./catalog.js";
 import * as cache from "./data.js";
 import * as theme from "./theme.js";
+import * as xrp from "./xrp.js";
 
 theme.bootSkin();
 
@@ -73,6 +74,15 @@ const els = {
   postFill: document.getElementById("postFill"),
   postSend: document.getElementById("postSend"),
   themeBtn: document.getElementById("themeBtn"),
+  xrpBtn: document.getElementById("xrpBtn"),
+  xrpBar: document.getElementById("xrpBar"),
+  xrpCopy: document.getElementById("xrpCopy"),
+  xrpLedger: document.getElementById("xrpLedger"),
+  xrpStatus: document.getElementById("xrpStatus"),
+  xrpCatalogAddress: document.getElementById("xrpCatalogAddress"),
+  xrpList: document.getElementById("xrpList"),
+  xrpTrack: document.getElementById("xrpTrack"),
+  xrpFill: document.getElementById("xrpFill"),
   skinEditor: document.getElementById("skinEditor"),
   skinSwatches: document.getElementById("skinSwatches"),
   skinStatus: document.getElementById("skinStatus"),
@@ -87,6 +97,7 @@ let downloadTimer = 0;
 let recentSlideTimer = 0;
 let downloadBusy = false;
 let postBusy = false;
+let xrpBusy = false;
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 
@@ -547,7 +558,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `${escapeHtml(state.folderName)} · long-press a plate to post`;
+      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>X</kbd> encode onto XRP`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -589,7 +600,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · long-press a plate to post · <kbd>T</kbd> skin";
+    hint.innerHTML = "Open a folder · <kbd>X</kbd> encode onto XRP · <kbd>T</kbd> skin";
   }
 }
 
@@ -1015,6 +1026,193 @@ function closeSkinEditor() {
   if (els.skinEditor) els.skinEditor.hidden = true;
 }
 
+function shortAddress(value) {
+  const text = String(value || "");
+  if (text.length < 16) return text;
+  return `${text.slice(0, 8)}…${text.slice(-6)}`;
+}
+
+function currentPlate() {
+  if (state.open) return visiblePhotos()[state.activeIndex] || null;
+  return state.photos.find((photo) => photo.featured) || state.photos[0] || null;
+}
+
+function setXrpProgress(pct, label) {
+  if (els.xrpTrack) els.xrpTrack.hidden = pct <= 0;
+  if (els.xrpFill) els.xrpFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (label && els.xrpStatus) els.xrpStatus.textContent = label;
+  if (els.xrpBar) els.xrpBar.classList.toggle("is-busy", xrpBusy);
+  if (els.xrpCopy) els.xrpCopy.textContent = xrpBusy ? "Sealing onto XRP…" : "Encode onto XRP";
+}
+
+async function fetchXrpLedger() {
+  try {
+    const response = await fetch("/api/xrp", { headers: { Accept: "application/json" } });
+    if (response.ok) return await response.json();
+  } catch {
+    /* static host */
+  }
+  if (window.ApertureAndroid?.xrpLedger) {
+    try {
+      return JSON.parse(window.ApertureAndroid.xrpLedger() || "{}");
+    } catch {
+      /* ignore */
+    }
+  }
+  const local = xrp.loadLedger();
+  return { ok: true, plates: local.plates || [], catalogAddress: local.catalogAddress || "", count: (local.plates || []).length };
+}
+
+function paintXrpLedger(listing) {
+  const plates = listing?.plates || [];
+  const address = listing?.catalogAddress || "";
+  if (els.xrpCatalogAddress) {
+    els.xrpCatalogAddress.hidden = !address;
+    els.xrpCatalogAddress.textContent = address ? `Catalog ${address}` : "";
+  }
+  if (els.xrpList) {
+    els.xrpList.innerHTML = plates
+      .slice(0, 12)
+      .map(
+        (item) => `
+      <li class="xrp-plate">
+        <strong>${escapeHtml(item.title || item.file || "Plate")}</strong>
+        <span>${escapeHtml(item.address || "")}</span>
+        <span>${escapeHtml(shortAddress(item.imageHash || item.memoData || ""))}</span>
+      </li>`
+      )
+      .join("");
+  }
+  if (els.xrpStatus && !xrpBusy) {
+    els.xrpStatus.textContent = plates.length
+      ? `${plates.length} plate${plates.length === 1 ? "" : "s"} encoded onto XRP`
+      : "Seal plates and write their fingerprints as XRPL memos.";
+  }
+}
+
+async function openXrpLedger() {
+  if (!els.xrpLedger) return;
+  els.xrpLedger.hidden = false;
+  paintXrpLedger(await fetchXrpLedger());
+}
+
+function closeXrpLedger() {
+  if (els.xrpLedger) els.xrpLedger.hidden = true;
+}
+
+async function encodeBytesOnXrp(bytes, title, filename, mime) {
+  if (window.ApertureAndroid?.xrpEncodeBytes) {
+    const hex = xrp.toHex(bytes);
+    return JSON.parse(window.ApertureAndroid.xrpEncodeBytes(hex, filename, title, mime || "") || "{}");
+  }
+  try {
+    const body = new FormData();
+    body.append("title", title);
+    body.append("plate", new Blob([bytes], { type: mime || "application/octet-stream" }), filename);
+    const response = await fetch("/api/xrp", { method: "POST", body });
+    if (response.ok) return await response.json();
+  } catch {
+    /* encode locally */
+  }
+  const encoded = await xrp.encodePlate(bytes, { title, file: filename, mime }, xrp.loadSecret());
+  xrp.rememberCertificate(encoded.certificate);
+  return encoded;
+}
+
+async function encodePhotoOnXrp(photo, onProgress) {
+  const filename = downloadFilename(photo);
+  const title = photo.title || filename;
+  if (window.ApertureAndroid?.xrpEncode) {
+    onProgress?.(40);
+    return JSON.parse(window.ApertureAndroid.xrpEncode(photo.src, filename, title) || "{}");
+  }
+  const blob = await plateBlob(photo, (pct) => onProgress?.(Math.max(8, pct)));
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return encodeBytesOnXrp(bytes, title, filename, blob.type);
+}
+
+async function encodeCatalogOnXrp() {
+  if (xrpBusy || !state.photos.length) return;
+  xrpBusy = true;
+  setXrpProgress(4, "Sealing plates…");
+  try {
+    if (window.ApertureAndroid?.xrpEncodeFolder) {
+      const listing = JSON.parse(window.ApertureAndroid.xrpEncodeFolder() || "{}");
+      paintXrpLedger(listing);
+      setXrpProgress(100, listing.count ? `${listing.count} plates on XRP` : "Encoded onto XRP");
+      return;
+    }
+    if (!window.ApertureAndroid) {
+      try {
+        const response = await fetch("/api/xrp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: state.folderPath }),
+        });
+        if (response.ok) {
+          const listing = await response.json();
+          if (listing.encoded || listing.count) {
+            paintXrpLedger(listing);
+            setXrpProgress(100, `${listing.count || listing.encoded} plates on XRP`);
+            return;
+          }
+        }
+      } catch {
+        /* fall through to local encode */
+      }
+    }
+    const photos = state.photos.slice(0, 80);
+    let encoded = 0;
+    let listing = await fetchXrpLedger();
+    for (let i = 0; i < photos.length; i += 1) {
+      setXrpProgress(Math.round(((i + 1) / photos.length) * 92), `Sealing ${i + 1} of ${photos.length}…`);
+      const result = await encodePhotoOnXrp(photos[i]);
+      if (result?.ok !== false && (result.certificate || result.address)) encoded += 1;
+    }
+    listing = await fetchXrpLedger();
+    paintXrpLedger(listing);
+    setXrpProgress(100, encoded ? `${listing.count || encoded} plates on XRP` : "Could not encode");
+  } catch {
+    setXrpProgress(0, "Could not encode onto XRP");
+  } finally {
+    xrpBusy = false;
+    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
+    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+  }
+}
+
+async function encodeCurrentOnXrp() {
+  const photo = currentPlate();
+  if (!photo || xrpBusy) return;
+  xrpBusy = true;
+  setXrpProgress(8, `Sealing ${photo.title || "plate"}…`);
+  try {
+    const result = await encodePhotoOnXrp(photo, (pct) => setXrpProgress(Math.max(10, pct), "Reading plate…"));
+    paintXrpLedger(await fetchXrpLedger());
+    setXrpProgress(100, result?.address ? `On XRP · ${shortAddress(result.address)}` : "Encoded onto XRP");
+  } catch {
+    setXrpProgress(0, "Could not encode this plate");
+  } finally {
+    xrpBusy = false;
+    if (els.xrpBar) els.xrpBar.classList.remove("is-busy");
+    if (els.xrpCopy) els.xrpCopy.textContent = "Encode onto XRP";
+  }
+}
+
+function downloadXrpLedger() {
+  void (async () => {
+    const listing = await fetchXrpLedger();
+    const blob = new Blob([JSON.stringify(listing, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Aperture-xrp-${slug(state.folderName || "catalog")}.json`;
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    if (window.ApertureAndroid?.shareXrp) window.ApertureAndroid.shareXrp();
+  })();
+}
+
 function editSkin(patch) {
   theme.applySkin(theme.patchSkin(theme.getSkin(), patch));
   paintSkinEditor();
@@ -1040,11 +1238,25 @@ function onKey(event) {
     }
     return;
   }
+  if (els.xrpLedger && !els.xrpLedger.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeXrpLedger();
+    }
+    return;
+  }
   if (event.key === "t" || event.key === "T") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
     if (els.skinEditor?.hidden === false) closeSkinEditor();
     else openSkinEditor();
+    return;
+  }
+  if (event.key === "x" || event.key === "X") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    if (els.xrpLedger?.hidden === false) closeXrpLedger();
+    else void openXrpLedger();
     return;
   }
   if (event.key === "o" || event.key === "O") {
@@ -1529,6 +1741,15 @@ async function wire() {
     if (event.target === els.postForm) closePostForm();
   });
   els.themeBtn?.addEventListener("click", openSkinEditor);
+  els.xrpBtn?.addEventListener("click", () => void openXrpLedger());
+  els.xrpBar?.addEventListener("click", () => void encodeCatalogOnXrp());
+  document.getElementById("xrpEncodeCatalog")?.addEventListener("click", () => void encodeCatalogOnXrp());
+  document.getElementById("xrpEncodePlate")?.addEventListener("click", () => void encodeCurrentOnXrp());
+  document.getElementById("xrpDownload")?.addEventListener("click", downloadXrpLedger);
+  document.getElementById("xrpClose")?.addEventListener("click", closeXrpLedger);
+  els.xrpLedger?.addEventListener("click", (event) => {
+    if (event.target === els.xrpLedger) closeXrpLedger();
+  });
   document.getElementById("skinClose")?.addEventListener("click", closeSkinEditor);
   document.getElementById("skinReset")?.addEventListener("click", () => {
     theme.applySkin(theme.defaultSkin());
@@ -1651,6 +1872,10 @@ function apertureHandleBack() {
   }
   if (els.skinEditor && !els.skinEditor.hidden) {
     closeSkinEditor();
+    return true;
+  }
+  if (els.xrpLedger && !els.xrpLedger.hidden) {
+    closeXrpLedger();
     return true;
   }
   if (els.postForm && !els.postForm.hidden) {

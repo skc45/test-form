@@ -11,6 +11,8 @@ Open a folder of photographs in the Aperture GUI:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -342,6 +344,251 @@ def save_skin(data) -> dict:
     return skin
 
 
+XRP_MAGIC = b"APXR"
+XRP_VERSION = 1
+XRP_NONCE_SIZE = 16
+XRP_HASH_SIZE = 32
+XRP_CIPHER_LABEL = b"aperture-xrp-cipher-v1"
+XRP_MEMO_TYPE = "aperture/xrp"
+XRP_ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz"
+XRP_MAX_PLATE = 25 * 1024 * 1024
+
+
+def xrp_secret_file() -> Path:
+    return cache_home() / "xrp-secret"
+
+
+def xrp_ledger_file() -> Path:
+    return cache_home() / "xrp.json"
+
+
+def xrp_vault_dir() -> Path:
+    path = cache_home() / "xrp"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def load_xrp_secret() -> bytes:
+    path = xrp_secret_file()
+    if path.is_file():
+        raw = path.read_bytes().strip()
+        try:
+            decoded = bytes.fromhex(raw.decode("ascii"))
+            if len(decoded) == 32:
+                return decoded
+        except (UnicodeDecodeError, ValueError):
+            pass
+        if len(raw) == 32:
+            return raw
+    secret = os.urandom(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(secret.hex() + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return secret
+
+
+def sha256_bytes(data: bytes) -> bytes:
+    return hashlib.sha256(data).digest()
+
+
+def to_hex(data: bytes) -> str:
+    return data.hex().upper()
+
+
+def xor_seal(plain: bytes, key: bytes) -> bytes:
+    if not key:
+        return plain
+    return bytes(value ^ key[index % len(key)] for index, value in enumerate(plain))
+
+
+def b58encode(data: bytes, alphabet: str = XRP_ALPHABET) -> str:
+    zeros = 0
+    for byte in data:
+        if byte == 0:
+            zeros += 1
+        else:
+            break
+    number = int.from_bytes(data, "big")
+    chars: list[str] = []
+    while number:
+        number, rem = divmod(number, 58)
+        chars.append(alphabet[rem])
+    return alphabet[0] * zeros + "".join(reversed(chars or [alphabet[0]]))
+
+
+def classic_address(payload20: bytes) -> str:
+    versioned = b"\x00" + payload20[:20]
+    check = sha256_bytes(sha256_bytes(versioned))[:4]
+    return b58encode(versioned + check)
+
+
+def cipher_key(secret: bytes) -> bytes:
+    return sha256_bytes(XRP_CIPHER_LABEL + secret)
+
+
+def plate_address(image_hash: bytes, secret: bytes) -> str:
+    payload = sha256_bytes(image_hash + b"xrpl-plate" + secret)[:20]
+    return classic_address(payload)
+
+
+def catalog_address(secret: bytes | None = None) -> str:
+    payload = sha256_bytes(b"xrpl-catalog" + (secret if secret is not None else load_xrp_secret()))[:20]
+    return classic_address(payload)
+
+
+def certificate_json(cert: dict) -> str:
+    return json.dumps(cert, separators=(",", ":"), ensure_ascii=True, sort_keys=True)
+
+
+def memo_hex(text: str) -> str:
+    return to_hex(text.encode("utf-8"))
+
+
+def encode_plate(plain: bytes, title: str = "", filename: str = "plate", mime: str = "application/octet-stream") -> dict:
+    if not plain or len(plain) > XRP_MAX_PLATE:
+        return {"ok": False, "error": "invalid plate"}
+    secret = load_xrp_secret()
+    nonce = os.urandom(XRP_NONCE_SIZE)
+    image_hash = sha256_bytes(plain)
+    key = sha256_bytes(secret + nonce + image_hash)
+    cipher = xor_seal(plain, key)
+    tag = hmac.new(cipher_key(secret), nonce + image_hash + cipher, hashlib.sha256).digest()
+    envelope = XRP_MAGIC + bytes([XRP_VERSION]) + nonce + image_hash + tag + cipher
+    address = plate_address(image_hash, secret)
+    cert = {
+        "v": 1,
+        "kind": "aperture-xrp",
+        "ledger": "xrpl",
+        "title": title or Path(filename).stem or "Plate",
+        "file": Path(filename).name or "plate",
+        "mime": mime or "application/octet-stream",
+        "imageHash": to_hex(image_hash),
+        "cipherHash": to_hex(sha256_bytes(cipher)),
+        "address": address,
+        "tag": to_hex(tag),
+        "encodedAt": datetime.now().isoformat(timespec="seconds"),
+    }
+    memo_data = memo_hex(certificate_json(cert))
+    catalog = catalog_address(secret)
+    cert["memoType"] = memo_hex(XRP_MEMO_TYPE)
+    cert["memoFormat"] = memo_hex("application/json")
+    cert["memoData"] = memo_data
+    cert["tx"] = {
+        "TransactionType": "Payment",
+        "Account": catalog,
+        "Destination": address,
+        "Amount": "1",
+        "Memos": [{"Memo": {"MemoType": cert["memoType"], "MemoFormat": cert["memoFormat"], "MemoData": memo_data}}],
+    }
+    vault = xrp_vault_dir() / f"{address}.apxr"
+    vault.write_bytes(envelope)
+    remember_xrp_certificate(cert)
+    return {"ok": True, "certificate": cert, "address": address, "catalogAddress": catalog, "vault": vault.name}
+
+
+def decode_plate(envelope: bytes, secret: bytes | None = None) -> tuple[dict, bytes] | None:
+    if len(envelope) < 5 + XRP_NONCE_SIZE + XRP_HASH_SIZE * 2:
+        return None
+    if envelope[:4] != XRP_MAGIC or envelope[4] != XRP_VERSION:
+        return None
+    secret = secret if secret is not None else load_xrp_secret()
+    cursor = 5
+    nonce = envelope[cursor : cursor + XRP_NONCE_SIZE]
+    cursor += XRP_NONCE_SIZE
+    image_hash = envelope[cursor : cursor + XRP_HASH_SIZE]
+    cursor += XRP_HASH_SIZE
+    tag = envelope[cursor : cursor + XRP_HASH_SIZE]
+    cursor += XRP_HASH_SIZE
+    cipher = envelope[cursor:]
+    expected = hmac.new(cipher_key(secret), nonce + image_hash + cipher, hashlib.sha256).digest()
+    if not hmac.compare_digest(expected, tag):
+        return None
+    key = sha256_bytes(secret + nonce + image_hash)
+    plain = xor_seal(cipher, key)
+    if sha256_bytes(plain) != image_hash:
+        return None
+    return {"imageHash": to_hex(image_hash), "tag": to_hex(tag)}, plain
+
+
+def remember_xrp_certificate(cert: dict) -> dict:
+    ledger = load_xrp_ledger()
+    digest = str(cert.get("imageHash") or "")
+    plates = [item for item in ledger.get("plates") or [] if str(item.get("imageHash") or "") != digest]
+    plates.insert(0, cert)
+    ledger["plates"] = plates[:80]
+    ledger["catalogAddress"] = cert.get("tx", {}).get("Account") or catalog_address()
+    ledger["updatedAt"] = datetime.now().isoformat(timespec="seconds")
+    path = xrp_ledger_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
+    return ledger
+
+
+def load_xrp_ledger() -> dict:
+    path = xrp_ledger_file()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                plates = data.get("plates")
+                if not isinstance(plates, list):
+                    data["plates"] = []
+                return data
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"plates": [], "catalogAddress": catalog_address()}
+
+
+def list_xrp() -> dict:
+    ledger = load_xrp_ledger()
+    plates = ledger.get("plates") or []
+    return {
+        "ok": True,
+        "catalogAddress": ledger.get("catalogAddress") or catalog_address(),
+        "count": len(plates),
+        "plates": plates,
+    }
+
+
+def encode_open_folders(folders: list[Path]) -> dict:
+    encoded = 0
+    skipped = 0
+    last = None
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        root = folder.resolve()
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+            if in_skip_dir(root, path) or not is_image(path):
+                continue
+            try:
+                size = path.stat().st_size
+                if size <= 0 or size > XRP_MAX_PLATE:
+                    skipped += 1
+                    continue
+                plain = path.read_bytes()
+            except OSError:
+                skipped += 1
+                continue
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            result = encode_plate(plain, path.stem, path.name, mime)
+            if result.get("ok"):
+                encoded += 1
+                last = result
+            else:
+                skipped += 1
+    payload = list_xrp()
+    payload["encoded"] = encoded
+    payload["skipped"] = skipped
+    if last:
+        payload["address"] = last.get("address")
+        payload["certificate"] = last.get("certificate")
+    return payload
+
+
 def remember_folder(folder: Path, photo_count: int | None = None) -> dict:
     payload = {
         "source": "folder",
@@ -485,6 +732,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **load_skin()})
             return
+        if parsed.path == "/api/xrp":
+            self._send_json(list_xrp())
+            return
         if parsed.path.startswith("/media/"):
             self._send_media(unquote(parsed.path[len("/media/") :]))
             return
@@ -497,6 +747,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **save_skin(self._read_json())})
+            return
+        if parsed.path == "/api/xrp":
+            self._encode_xrp()
             return
         if parsed.path != "/api/open":
             self.send_error(404, "Not found")
@@ -607,6 +860,35 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             else:
                 fields[str(name)] = payload.decode("utf-8", "replace")
         return fields, files
+
+    def _encode_xrp(self) -> None:
+        content_type = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" in content_type:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length <= 0 or length > XRP_MAX_PLATE + 4096:
+                self.send_error(400, "Invalid plate")
+                return
+            fields, files = self._parse_multipart(content_type, self.rfile.read(length))
+            plate = files.get("plate") or files.get("file")
+            if not plate or not plate[1]:
+                self.send_error(400, "Missing plate")
+                return
+            filename, payload, ctype = plate
+            result = encode_plate(payload, fields.get("title") or Path(filename).stem, filename, ctype)
+            if not result.get("ok"):
+                self.send_error(400, str(result.get("error") or "Could not encode"))
+                return
+            self._send_json(result)
+            return
+        body = self._read_json()
+        folders = self._folders_from_body(body) or list(self.runtime.folders)
+        if not folders:
+            self.send_error(404, "Folder not found")
+            return
+        self._send_json(encode_open_folders(folders))
 
     def _read_json(self) -> dict:
         try:

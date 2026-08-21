@@ -103,6 +103,7 @@ class MainActivity : AppCompatActivity() {
                             store.cacheResponse()
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
+                        path == "/api/xrp" && request.method == "GET" -> store.xrpResponse()
                         path == "/api/recent-cover" -> {
                             val index = url.getQueryParameter("i")?.toIntOrNull() ?: -1
                             val plate = url.getQueryParameter("p")?.toIntOrNull() ?: 0
@@ -219,6 +220,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun xrpLedger(): String {
+            return store.xrpLedger().toString()
+        }
+
+        @JavascriptInterface
+        fun xrpEncode(url: String, filename: String, title: String): String {
+            return store.xrpEncode(url, filename, title).toString()
+        }
+
+        @JavascriptInterface
+        fun xrpEncodeFolder(): String {
+            return store.xrpEncodeFolder().toString()
+        }
+
+        @JavascriptInterface
+        fun shareXrp() {
+            runOnUiThread {
+                startShareXrp()
+            }
+        }
+
+        @JavascriptInterface
         fun setChrome(color: String) {
             runOnUiThread {
                 applyChrome(color)
@@ -282,6 +305,29 @@ class MainActivity : AppCompatActivity() {
                 }
                 startActivity(Intent.createChooser(send, "Send plate"))
                 notifyPost(100)
+            }
+        }.start()
+    }
+
+    private fun startShareXrp() {
+        Thread {
+            val dest = try {
+                store.writeXrpLedgerFile()
+            } catch (_: Exception) {
+                null
+            }
+            if (dest == null || !dest.exists()) return@Thread
+            runOnUiThread {
+                val uri = FileProvider.getUriForFile(this, "$packageName.files", dest)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/json"
+                    clipData = android.content.ClipData.newUri(contentResolver, "xrp", uri)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "Aperture XRP ledger")
+                    putExtra(Intent.EXTRA_TEXT, "XRP cipher ledger for Aperture plates.")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Share XRP ledger"))
             }
         }.start()
     }
