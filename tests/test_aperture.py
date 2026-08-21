@@ -89,6 +89,51 @@ class ServerTests(unittest.TestCase):
         status, _, _ = self._get("/media/../../aperture.py")
         self.assertEqual(status, 404)
 
+    def test_search_open_folder_recents_and_hash(self):
+        other = Path(self.tmp.name) / "other-album"
+        other.mkdir()
+        (other / "ridge.png").write_bytes(TINY_PNG)
+        app.remember_folder(self.root, 1)
+        app.remember_folder(other, 1)
+
+        status, ctype, body = self._get("/api/search")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", ctype)
+        empty = json.loads(body)
+        self.assertTrue(empty["ok"])
+        self.assertEqual(empty["count"], 0)
+        self.assertEqual(empty["photos"], [])
+
+        status, _, body = self._get("/api/search?q=ridge")
+        found = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(found["count"], 1)
+        hit = next(photo for photo in found["photos"] if photo["title"] == "ridge")
+        self.assertTrue(hit["id"].startswith("search/"))
+        self.assertIn("ridge.png", hit["id"])
+        self.assertTrue(hit["src"].startswith("/media/search/"))
+
+        status, ctype, payload = self._get("/media/" + hit["id"])
+        self.assertEqual(status, 200)
+        self.assertTrue(ctype.startswith("image/"))
+        self.assertEqual(payload, TINY_PNG)
+
+        status, _, _ = self._get("/media/search/0/../../aperture.py")
+        self.assertEqual(status, 404)
+
+        digest = app.to_hex(app.sha256_bytes(TINY_PNG))
+        status, _, body = self._get("/api/search?hash=" + digest)
+        hashed = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(hashed["exact"])
+        self.assertGreaterEqual(hashed["count"], 1)
+        self.assertTrue(hashed["photos"][0]["exact"])
+        self.assertEqual(hashed["photos"][0]["id"], "plate.png")
+
+        status, _, body = self._get("/api/search?q=plate")
+        titled = json.loads(body)
+        self.assertTrue(any(photo["id"] == "plate.png" for photo in titled["photos"]))
+
     def test_index_served(self):
         status, ctype, body = self._get("/")
         self.assertEqual(status, 200)

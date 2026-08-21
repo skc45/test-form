@@ -30,6 +30,7 @@ const state = {
   recents: [],
   selectedIds: [],
   postPhoto: null,
+  searchHits: [],
 };
 
 const els = {
@@ -102,6 +103,7 @@ let postBusy = false;
 let ethBusy = false;
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
+let searchTimer = 0;
 
 function slug(value) {
   return String(value || "folder")
@@ -142,7 +144,11 @@ function revokeBlobs() {
 
 function visiblePhotos() {
   const q = state.query.trim().toLowerCase();
-  return state.photos.filter((photo) => {
+  const hits = state.searchHits || [];
+  const hitIds = new Set(hits.map((item) => item.id));
+  const fromServer = hits.filter((photo) => state.filter === "all" || photo.category === state.filter);
+  const fromCatalog = state.photos.filter((photo) => {
+    if (hitIds.has(photo.id)) return false;
     const catOk = state.filter === "all" || photo.category === state.filter;
     if (!catOk) return false;
     if (!q) return true;
@@ -151,6 +157,7 @@ function visiblePhotos() {
       .toLowerCase()
       .includes(q);
   });
+  return fromServer.length ? [...fromServer, ...fromCatalog] : fromCatalog;
 }
 
 function bindImage(img, photo, size = "thumb") {
@@ -542,6 +549,7 @@ function setCatalog(photos, { folderName = "", folderPath = "", source = "folder
   if (source !== "folder") state.folderHandle = null;
   state.filter = "all";
   state.query = "";
+  state.searchHits = [];
   els.search.value = "";
   els.brandKicker.textContent = folderName || "Vol. I · Photographica";
   hideOpener();
@@ -1222,8 +1230,68 @@ function insertDecodedPlate(photo) {
   openViewer(photo.id);
 }
 
-function initializeShardSearch(located) {
+async function searchCatalogOnServer(query, imageHash = "") {
+  const q = String(query || "").trim();
+  const hash = String(imageHash || "").trim();
+  if (!hash && q.length < 2) {
+    return { ok: true, photos: [], count: 0, exact: false, query: q };
+  }
+  try {
+    if (window.ApertureAndroid?.searchCatalog) {
+      const located = JSON.parse(window.ApertureAndroid.searchCatalog(q, hash) || "{}");
+      if (located?.ok) return located;
+    }
+  } catch {
+    /* fall through to HTTP */
+  }
+  try {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (hash) params.set("hash", hash);
+    const response = await fetch(`/api/search?${params}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return { ok: false, photos: [] };
+    return await response.json();
+  } catch {
+    return { ok: false, photos: [] };
+  }
+}
+
+function applyServerSearch(result) {
+  const photos = Array.isArray(result?.photos) ? result.photos : [];
+  state.searchHits = photos;
+  const extraCats = categoriesFrom([...photos, ...state.photos]).filter(
+    (cat) => cat.id !== "all" && !state.categories.some((item) => item.id === cat.id)
+  );
+  if (extraCats.length) state.categories = [...state.categories, ...extraCats];
+  renderFilters();
+  renderHero();
+  renderCatalog();
+  return photos;
+}
+
+function scheduleServerSearch() {
+  window.clearTimeout(searchTimer);
+  const q = String(els.search?.value || "").trim();
+  if (q.length < 2) {
+    if (!q) {
+      state.searchHits = [];
+      renderCatalog();
+    }
+    return;
+  }
+  searchTimer = window.setTimeout(() => {
+    const requested = String(els.search?.value || "").trim();
+    void (async () => {
+      const result = await searchCatalogOnServer(requested);
+      if (String(els.search?.value || "").trim() !== requested) return;
+      applyServerSearch(result);
+    })();
+  }, 320);
+}
+
+async function initializeShardSearch(located) {
   const query = String(located?.search || located?.title || located?.address || "").trim();
+  const imageHash = String(located?.imageHash || located?.certificate?.imageHash || "").trim();
   closeEthOverlay();
   state.query = query;
   state.filter = "all";
@@ -1232,10 +1300,15 @@ function initializeShardSearch(located) {
     els.search.focus();
     els.search.select();
   }
-  renderFilters();
-  renderHero();
-  renderCatalog();
-  setEthProgress(100, query ? `Searching catalog for ${query}` : "Shard matched — searching catalog");
+  setEthProgress(40, query ? `Searching catalog for ${query}` : "Shard matched — searching catalog");
+  const result = await searchCatalogOnServer(query, imageHash);
+  const photos = applyServerSearch(result);
+  const exact = photos.find((item) => item.exact) || (result?.exact ? photos[0] : null);
+  if (exact?.id) openViewer(exact.id);
+  setEthProgress(
+    100,
+    exact ? `Found ${exact.title}` : query ? `Searching catalog for ${query}` : "Shard matched — searching catalog"
+  );
 }
 
 async function openEthShard(code) {
@@ -1310,7 +1383,7 @@ async function openEthShard(code) {
     let src = located.src || "";
     if (!src && located.decoded && located.address) src = `/media/eth/${located.address}`;
     if (!src) {
-      initializeShardSearch(located);
+      await initializeShardSearch(located);
       return;
     }
     const photo = {
@@ -1832,7 +1905,9 @@ async function wire() {
 
   els.search.addEventListener("input", () => {
     state.query = els.search.value;
+    if (!state.query.trim()) state.searchHits = [];
     renderCatalog();
+    scheduleServerSearch();
   });
 
   els.layoutBtn.addEventListener("click", () => {

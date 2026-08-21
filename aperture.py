@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parent
 CACHE_ENV = "APERTURE_CACHE_DIR"
 MAX_RECENTS = 3
 MAX_RECENT_SLIDES = 8
+SEARCH_HIT_LIMIT = 40
+SEARCH_HASH_FILE_LIMIT = 200
 IMAGE_EXTS = {
     ".jpg",
     ".jpeg",
@@ -95,6 +97,7 @@ class Runtime:
 
     def __init__(self, folder: Path | None = None):
         self.folders: list[Path] = [folder.resolve()] if folder else []
+        self.search_folders: list[Path] = []
 
     @property
     def folder(self) -> Path | None:
@@ -733,6 +736,159 @@ def scan_folders(folders: list[Path]) -> list[dict]:
     return photos
 
 
+def normalize_image_hash(value: str) -> str:
+    hex_upper = "".join(
+        ch for ch in str(value or "").strip().removeprefix("0x").removeprefix("0X") if ch in "0123456789abcdefABCDEF"
+    ).upper()
+    return hex_upper if len(hex_upper) == 64 else ""
+
+
+def search_roots(runtime: Runtime | None = None) -> list[Path]:
+    folders: list[Path] = []
+    seen: set[str] = set()
+
+    def add(raw) -> None:
+        text = str(raw or "").strip()
+        if not text:
+            return
+        folder = Path(text).expanduser()
+        if not folder.is_dir():
+            return
+        try:
+            resolved = folder.resolve()
+        except OSError:
+            return
+        key = str(resolved)
+        if key in seen:
+            return
+        seen.add(key)
+        folders.append(resolved)
+
+    if runtime:
+        for item in runtime.folders:
+            add(item)
+    session = load_disk_session()
+    for item in session.get("recents") or []:
+        if isinstance(item, dict):
+            add(item.get("path") or item.get("id"))
+        else:
+            add(item)
+    add(session.get("lastFolder"))
+    return folders
+
+
+def photo_search_blob(photo: dict) -> str:
+    return " ".join(
+        str(photo.get(key) or "") for key in ("title", "location", "photographer", "category", "id")
+    ).lower()
+
+
+def make_search_photo(root: Path, path: Path, ident: str) -> dict:
+    parent = path.parent.name if path.parent != root else root.name
+    location = path.parent.relative_to(root).as_posix() if path.parent != root else root.name
+    try:
+        year = datetime.fromtimestamp(path.stat().st_mtime).year
+    except OSError:
+        year = datetime.now().year
+    media = "/media/" + quote(ident)
+    return {
+        "id": ident,
+        "title": path.stem,
+        "photographer": root.name,
+        "location": location,
+        "year": year,
+        "category": slug(parent),
+        "src": media,
+        "thumb": media,
+        "hero": media,
+        "local": True,
+        "featured": False,
+    }
+
+
+def search_catalog(
+    query: str,
+    image_hash: str = "",
+    folders: list[Path] | None = None,
+    open_folders: list[Path] | None = None,
+) -> dict:
+    needle = str(query or "").strip().lower()
+    digest = normalize_image_hash(image_hash)
+    roots = folders or []
+    opened: list[Path] = []
+    for item in open_folders or []:
+        try:
+            opened.append(item.resolve())
+        except OSError:
+            continue
+    open_keys = {str(item): index for index, item in enumerate(opened)}
+    multi_open = len(opened) > 1
+    if not needle and not digest:
+        return {"ok": True, "query": str(query or "").strip(), "imageHash": "", "count": 0, "photos": [], "exact": False}
+
+    hits: list[dict] = []
+    exact: dict | None = None
+    hashed = 0
+    seen: set[str] = set()
+
+    for search_index, folder in enumerate(roots):
+        open_index = open_keys.get(str(folder))
+        try:
+            paths = sorted(folder.rglob("*"), key=lambda item: item.as_posix().lower())
+        except OSError:
+            continue
+        for path in paths:
+            if in_skip_dir(folder, path) or not is_image(path):
+                continue
+            rel = path.relative_to(folder).as_posix()
+            if open_index is not None:
+                ident = f"{open_index}/{rel}" if multi_open else rel
+            else:
+                ident = f"search/{search_index}/{rel}"
+            photo = make_search_photo(folder, path, ident)
+            text_hit = bool(needle) and needle in photo_search_blob(photo)
+            hash_hit = False
+            if digest and hashed < SEARCH_HASH_FILE_LIMIT and exact is None:
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    size = 0
+                if 0 < size <= ETH_MAX_PLATE:
+                    hashed += 1
+                    try:
+                        if to_hex(sha256_bytes(path.read_bytes())) == digest:
+                            hash_hit = True
+                            photo["exact"] = True
+                            exact = photo
+                    except OSError:
+                        pass
+            if not text_hit and not hash_hit:
+                continue
+            if ident in seen:
+                continue
+            seen.add(ident)
+            hits.append(photo)
+            if len(hits) >= SEARCH_HIT_LIMIT and (exact is not None or not digest):
+                break
+        if len(hits) >= SEARCH_HIT_LIMIT and (exact is not None or not digest):
+            break
+
+    if exact:
+        hits = [exact] + [item for item in hits if item["id"] != exact["id"]]
+    hits = hits[:SEARCH_HIT_LIMIT]
+    for index, photo in enumerate(hits):
+        photo["index"] = index
+        photo["featured"] = index == 0
+    return {
+        "ok": True,
+        "query": str(query or "").strip(),
+        "imageHash": digest.lower(),
+        "count": len(hits),
+        "photos": hits,
+        "exact": exact is not None,
+    }
+
+
 class ApertureHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, runtime: Runtime | None = None, folder: Path | None = None, app_mode: bool = True, **kwargs):
         self.runtime = runtime or Runtime(folder)
@@ -770,6 +926,14 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             exists = bool(last and Path(last).expanduser().is_dir())
             recents = decorate_recents(session.get("recents") or [])
             self._send_json({**session, "exists": exists, "recents": recents})
+            return
+        if parsed.path == "/api/search":
+            qs = parse_qs(parsed.query)
+            query = str((qs.get("q") or qs.get("query") or [""])[0])
+            image_hash = str((qs.get("hash") or qs.get("h") or qs.get("imageHash") or [""])[0])
+            roots = search_roots(self.runtime)
+            self.runtime.search_folders = roots
+            self._send_json(search_catalog(query, image_hash, roots, self.runtime.folders))
             return
         if parsed.path == "/api/recent-cover":
             self._send_recent_cover(parsed.query)
@@ -1025,11 +1189,35 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         self._send_image_file(covers[plate])
 
     def _send_media(self, rel: str) -> None:
+        rel = posixpath.normpath(rel).lstrip("/")
+        if rel.startswith("search/"):
+            folders = self.runtime.search_folders or search_roots(self.runtime)
+            if not self.runtime.search_folders:
+                self.runtime.search_folders = folders
+            rest = rel[len("search/") :]
+            head, sep, relative = rest.partition("/")
+            if not sep:
+                self.send_error(404, "Not found")
+                return
+            try:
+                index = int(head)
+            except ValueError:
+                self.send_error(404, "Not found")
+                return
+            if index < 0 or index >= len(folders):
+                self.send_error(404, "Not found")
+                return
+            folder = folders[index]
+            path = (folder / relative).resolve()
+            if not safe_under(folder, path) or not is_image(path):
+                self.send_error(404, "Not found")
+                return
+            self._send_image_file(path)
+            return
         folders = self.runtime.folders
         if not folders:
             self.send_error(404, "No folder open")
             return
-        rel = posixpath.normpath(rel).lstrip("/")
         folder = self.folder
         relative = rel
         if len(folders) > 1:

@@ -104,6 +104,13 @@ class MainActivity : AppCompatActivity() {
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
                         path == "/api/eth" && request.method == "GET" -> store.ethResponse()
+                        path == "/api/search" && request.method == "GET" -> {
+                            val query = url.getQueryParameter("q") ?: url.getQueryParameter("query").orEmpty()
+                            val hash = url.getQueryParameter("hash")
+                                ?: url.getQueryParameter("h")
+                                ?: url.getQueryParameter("imageHash").orEmpty()
+                            store.searchResponse(query, hash)
+                        }
                         path == "/api/eth/shard" && request.method == "GET" -> {
                             val code = url.getQueryParameter("c") ?: url.getQueryParameter("code").orEmpty()
                             store.ethShardResponse(code)
@@ -235,6 +242,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun ethOpen(code: String): String {
             return store.ethOpen(code).toString()
+        }
+
+        @JavascriptInterface
+        fun searchCatalog(query: String, imageHash: String): String {
+            return store.searchCatalog(query, imageHash).toString()
         }
 
         @JavascriptInterface

@@ -173,6 +173,151 @@ class CatalogStore(private val context: Context) {
         )
     }
 
+    fun searchResponse(query: String, imageHash: String): WebResourceResponse {
+        return json(searchCatalog(query, imageHash))
+    }
+
+    fun searchCatalog(query: String, imageHash: String): JSONObject {
+        val needle = query.trim().lowercase(Locale.US)
+        val digest = normalizeImageHash(imageHash)
+        if (needle.isEmpty() && digest.isEmpty()) {
+            return JSONObject()
+                .put("ok", true)
+                .put("query", query.trim())
+                .put("imageHash", "")
+                .put("count", 0)
+                .put("photos", JSONArray())
+                .put("exact", false)
+        }
+        val roots = searchRoots()
+        val openKeys = currentTrees.mapIndexed { index, uri -> uri.toString() to index }.toMap()
+        val multiOpen = currentTrees.size > 1
+        val hits = mutableListOf<JSONObject>()
+        val seen = mutableSetOf<String>()
+        var exact: JSONObject? = null
+        var hashed = 0
+
+        roots.forEachIndexed { searchIndex, tree ->
+            val root = DocumentFile.fromTreeUri(context, tree) ?: return@forEachIndexed
+            val folderName = root.name ?: "Folder"
+            val openIndex = openKeys[tree.toString()]
+            val found = mutableListOf<SearchPlate>()
+            collectSearch(root, "", found)
+            for (plate in found) {
+                val ident = when {
+                    openIndex != null && multiOpen -> "$openIndex/${plate.rel}"
+                    openIndex != null -> plate.rel
+                    else -> "search/$searchIndex/${plate.rel}"
+                }
+                if (openIndex == null) {
+                    media[ident] = plate.uri to plate.mime
+                }
+                val parent = if (plate.rel.contains("/")) plate.rel.substringBeforeLast("/").substringAfterLast("/") else folderName
+                val location = if (plate.rel.contains("/")) plate.rel.substringBeforeLast("/") else folderName
+                val title = plate.name.substringBeforeLast('.')
+                val mediaPath = "/media/" + Uri.encode(ident)
+                val photo = JSONObject()
+                    .put("id", ident)
+                    .put("title", title)
+                    .put("photographer", folderName)
+                    .put("location", location)
+                    .put("year", plate.year)
+                    .put("category", slug(parent))
+                    .put("src", mediaPath)
+                    .put("thumb", mediaPath)
+                    .put("hero", mediaPath)
+                    .put("local", true)
+                    .put("featured", false)
+                val blob = listOf(title, location, folderName, slug(parent), ident).joinToString(" ").lowercase(Locale.US)
+                val textHit = needle.isNotEmpty() && blob.contains(needle)
+                var hashHit = false
+                if (digest.isNotEmpty() && hashed < SEARCH_HASH_FILE_LIMIT && exact == null) {
+                    val bytes = readUriBytesLimited(plate.uri)
+                    if (bytes != null) {
+                        hashed += 1
+                        if (toHex(sha256(bytes)) == digest) {
+                            hashHit = true
+                            photo.put("exact", true)
+                            exact = photo
+                        }
+                    }
+                }
+                if (!textHit && !hashHit) continue
+                if (!seen.add(ident)) continue
+                hits += photo
+                if (hits.size >= SEARCH_HIT_LIMIT && (exact != null || digest.isEmpty())) break
+            }
+            if (hits.size >= SEARCH_HIT_LIMIT && (exact != null || digest.isEmpty())) return@forEachIndexed
+        }
+
+        val ordered = mutableListOf<JSONObject>()
+        exact?.let { match ->
+            ordered += match
+            hits.filterTo(ordered) { it.optString("id") != match.optString("id") }
+        } ?: ordered.addAll(hits)
+        val capped = ordered.take(SEARCH_HIT_LIMIT)
+        capped.forEachIndexed { index, photo ->
+            photo.put("index", index)
+            photo.put("featured", index == 0)
+        }
+        return JSONObject()
+            .put("ok", true)
+            .put("query", query.trim())
+            .put("imageHash", digest.lowercase(Locale.US))
+            .put("count", capped.size)
+            .put("photos", JSONArray(capped))
+            .put("exact", exact != null)
+    }
+
+    private data class SearchPlate(
+        val rel: String,
+        val name: String,
+        val year: Int,
+        val uri: Uri,
+        val mime: String,
+    )
+
+    private fun searchRoots(): List<Uri> {
+        val out = linkedMapOf<String, Uri>()
+        currentTrees.forEach { out[it.toString()] = it }
+        val recents = recentsArray()
+        for (index in 0 until recents.length()) {
+            val item = recents.getJSONObject(index)
+            val raw = item.optString("path").ifBlank { item.optString("id") }
+            if (raw.isBlank()) continue
+            val uri = Uri.parse(raw)
+            if (!hasPermission(uri)) continue
+            out.putIfAbsent(raw, uri)
+        }
+        val last = prefs.getString(KEY_URI, "").orEmpty()
+        if (last.isNotBlank()) {
+            val uri = Uri.parse(last)
+            if (hasPermission(uri)) out.putIfAbsent(last, uri)
+        }
+        return out.values.toList()
+    }
+
+    private fun collectSearch(dir: DocumentFile, prefix: String, out: MutableList<SearchPlate>) {
+        val children = dir.listFiles().sortedBy { it.name?.lowercase(Locale.US) ?: "" }
+        for (child in children) {
+            val name = child.name ?: continue
+            if (child.isDirectory) {
+                if (skipDir(name)) continue
+                val next = if (prefix.isEmpty()) name else "$prefix/$name"
+                collectSearch(child, next, out)
+                continue
+            }
+            if (!isImage(name)) continue
+            val rel = if (prefix.isEmpty()) name else "$prefix/$name"
+            val year = Calendar.getInstance().apply { timeInMillis = child.lastModified() }.get(Calendar.YEAR)
+            out += SearchPlate(rel, name, year, child.uri, mimeFor(name))
+        }
+    }
+
+    private fun skipDir(name: String): Boolean {
+        return name.equals("blockchain", ignoreCase = true) || name.equals("xrp", ignoreCase = true)
+    }
+
     private fun scan(tree: Uri) {
         scanTrees(listOf(tree))
     }
@@ -200,7 +345,7 @@ class CatalogStore(private val context: Context) {
         for (child in children) {
             val name = child.name ?: continue
             if (child.isDirectory) {
-                if (name.equals("blockchain", ignoreCase = true)) continue
+                if (skipDir(name)) continue
                 val next = if (prefix.isEmpty()) name else "$prefix/$name"
                 walk(child, folderName, next, idPrefix)
                 continue
@@ -312,7 +457,7 @@ class CatalogStore(private val context: Context) {
             if (out.size >= limit) return
             val name = child.name ?: continue
             if (child.isDirectory) {
-                if (name.equals("blockchain", ignoreCase = true)) continue
+                if (skipDir(name)) continue
                 collectImages(child, out, limit)
                 continue
             }
@@ -638,6 +783,25 @@ class CatalogStore(private val context: Context) {
         }
     }
 
+    private fun readUriBytesLimited(uri: Uri, max: Int = ETH_MAX_PLATE): ByteArray? {
+        return try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                if (afd.length == 0L || afd.length > max) return null
+            }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            if (bytes.isEmpty() || bytes.size > max) null else bytes
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun normalizeImageHash(value: String): String {
+        val hex = value.trim().removePrefix("0x").removePrefix("0X")
+            .filter { it in "0123456789abcdefABCDEF" }
+            .uppercase(Locale.US)
+        return if (hex.length == 64) hex else ""
+    }
+
     private fun hasPermission(uri: Uri): Boolean {
         return context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
     }
@@ -835,6 +999,8 @@ class CatalogStore(private val context: Context) {
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
         private const val ETH_MAX_PLATE = 25 * 1024 * 1024
+        private const val SEARCH_HIT_LIMIT = 40
+        private const val SEARCH_HASH_FILE_LIMIT = 200
         private const val ETH_SHARD_COUNT = 64
         private const val ETH_PREFIX = "eths:"
         private val ETH_CATALOG = "eth-catalog".toByteArray(StandardCharsets.UTF_8)
