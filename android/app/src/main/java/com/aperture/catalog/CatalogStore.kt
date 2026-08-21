@@ -379,7 +379,7 @@ class CatalogStore(private val context: Context) {
 
     fun savePost(url: String, filename: String, title: String, caption: String): JSONObject {
         val bytes: ByteArray
-        var mime = ""
+        val mime: String
         if (url.startsWith("data:")) {
             bytes = decodeDataUrl(url) ?: return JSONObject().put("ok", false)
             mime = mimeFromDataUrl(url)
