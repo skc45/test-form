@@ -424,6 +424,56 @@ def save_skin(data) -> dict:
     return skin
 
 
+INTERFACE_SERVERS = ("catalog", "demo", "canvas", "eth")
+INTERFACE_ENGINES = ("off", "titles", "captions", "files", "pointers")
+
+
+def interface_file() -> Path:
+    return cache_home() / "interface.json"
+
+
+def default_interface() -> dict:
+    return {
+        "ok": True,
+        "plugs": {
+            "catalog": "titles",
+            "demo": "titles",
+            "canvas": "captions",
+            "eth": "pointers",
+        },
+    }
+
+
+def normalize_interface(data) -> dict:
+    base = default_interface()["plugs"]
+    raw = data.get("plugs") if isinstance(data, dict) else {}
+    if not isinstance(raw, dict):
+        raw = {}
+    plugs = {}
+    for server in INTERFACE_SERVERS:
+        engine = str(raw.get(server) or base[server])
+        plugs[server] = engine if engine in INTERFACE_ENGINES else base[server]
+    return {"ok": True, "plugs": plugs}
+
+
+def load_interface() -> dict:
+    path = interface_file()
+    if path.is_file():
+        try:
+            return normalize_interface(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            pass
+    return default_interface()
+
+
+def save_interface(data) -> dict:
+    payload = normalize_interface(data)
+    path = interface_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
 ETH_VERSION = 1
 ETH_SHARD_COUNT = 64
 ETH_PREFIX = "eths:"
@@ -892,6 +942,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **load_skin()})
             return
+        if parsed.path == "/api/interface":
+            self._send_json(load_interface())
+            return
         if parsed.path == "/api/eth":
             self._send_json(list_eth())
             return
@@ -935,6 +988,9 @@ class ApertureHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/skin":
             self._send_json({"ok": True, **save_skin(self._read_json())})
+            return
+        if parsed.path == "/api/interface":
+            self._send_json(save_interface(self._read_json()))
             return
         if parsed.path == "/api/eth":
             self._encode_eth()

@@ -2,6 +2,7 @@ import { CATEGORIES as DEMO_CATEGORIES, PHOTOS as DEMO_PHOTOS, fallbackSrc, plat
 import * as cache from "./data.js";
 import * as theme from "./theme.js";
 import * as eth from "./eth.js";
+import * as plugs from "./interface.js";
 
 theme.bootSkin();
 
@@ -88,6 +89,12 @@ const els = {
   canvasTrack: document.getElementById("canvasTrack"),
   canvasFill: document.getElementById("canvasFill"),
   canvasNftAll: document.getElementById("canvasNftAll"),
+  plugBtn: document.getElementById("plugBtn"),
+  plugMenu: document.getElementById("plugMenu"),
+  plugStatus: document.getElementById("plugStatus"),
+  plugBay: document.getElementById("plugBay"),
+  plugHits: document.getElementById("plugHits"),
+  plugQuery: document.getElementById("plugQuery"),
   ethShard: document.getElementById("ethShard"),
   ethStatus: document.getElementById("ethStatus"),
   ethCatalogAddress: document.getElementById("ethCatalogAddress"),
@@ -113,6 +120,8 @@ let postBusy = false;
 let ethBusy = false;
 let canvasNftBusy = false;
 let canvasPosts = [];
+let plugMap = plugs.defaultPlugs();
+let plugHits = [];
 let longPress = { timer: 0, fired: false, x: 0, y: 0 };
 let swipe = { x: 0, t: 0 };
 const crop = {
@@ -578,7 +587,7 @@ async function persistCatalogAsync() {
   const hint = els.catalogHint;
   if (state.source === "folder" && state.folderName) {
     if (hint) {
-      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT`;
+      hint.innerHTML = `${escapeHtml(state.folderName)} · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT`;
     }
     const session = await cache.loadSession();
     const combined = state.selectedIds.length > 1;
@@ -620,7 +629,7 @@ async function persistCatalogAsync() {
     return;
   }
   if (hint) {
-    hint.innerHTML = "Open a folder · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin";
+    hint.innerHTML = "Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin";
   }
 }
 
@@ -1046,6 +1055,163 @@ function closeSkinEditor() {
   if (els.skinEditor) els.skinEditor.hidden = true;
 }
 
+function pluggedCount() {
+  return plugs.SERVERS.filter((server) => plugs.isPlugged(plugMap[server.id])).length;
+}
+
+function paintPlugBay() {
+  if (!els.plugBay) return;
+  els.plugBay.innerHTML = plugs.SERVERS.map((server) => {
+    const engineId = plugMap[server.id] || "off";
+    const unplugged = !plugs.isPlugged(engineId);
+    const options = plugs.ENGINES.map(
+      (engine) =>
+        `<option value="${engine.id}"${engine.id === engineId ? " selected" : ""}>${escapeHtml(engine.label)}</option>`
+    ).join("");
+    return `
+      <div class="plug-row${unplugged ? " is-unplugged" : ""}">
+        <div class="plug-server">
+          <strong>${escapeHtml(server.label)}</strong>
+          <span>${escapeHtml(server.hint)}</span>
+        </div>
+        <span class="plug-cable" aria-hidden="true"></span>
+        <label>
+          <span class="sr-only">Search engine for ${escapeHtml(server.label)}</span>
+          <select data-plug-server="${server.id}">${options}</select>
+        </label>
+      </div>`;
+  }).join("");
+}
+
+async function collectPlugRecords() {
+  const records = [];
+  if (plugs.isPlugged(plugMap.catalog)) {
+    for (const photo of state.photos) records.push(plugs.recordFromPhoto(photo, "catalog"));
+  }
+  if (plugs.isPlugged(plugMap.demo) && !(state.source === "demo" && plugs.isPlugged(plugMap.catalog))) {
+    for (const photo of DEMO_PHOTOS) records.push(plugs.recordFromPhoto(photo, "demo"));
+  }
+  if (plugs.isPlugged(plugMap.canvas)) {
+    const listing = await fetchCanvasPosts();
+    for (const post of listing.posts || []) records.push(plugs.recordFromPost(post));
+  }
+  if (plugs.isPlugged(plugMap.eth)) {
+    const listing = await fetchEthShard();
+    for (const item of listing.plates || []) records.push(plugs.recordFromEth(item));
+  }
+  return records;
+}
+
+async function paintPlugHits() {
+  if (!els.plugHits) return;
+  const query = String(els.plugQuery?.value || "").trim();
+  const live = pluggedCount();
+  if (!query) {
+    plugHits = [];
+    els.plugHits.innerHTML = `<p class="plug-empty">Type to search plugged engines</p>`;
+    if (els.plugStatus) {
+      els.plugStatus.textContent = live
+        ? `${live} image server${live === 1 ? "" : "s"} plugged into search engines`
+        : "Plug an image server into a search engine, then search those plugs.";
+    }
+    return;
+  }
+  const records = await collectPlugRecords();
+  plugHits = records
+    .filter((record) => plugs.matchRecord(plugMap[record.server], record, query))
+    .slice(0, 24);
+  if (!plugHits.length) {
+    els.plugHits.innerHTML = `<p class="plug-empty">No plugged engines match that query</p>`;
+  } else {
+    els.plugHits.innerHTML = plugHits
+      .map((record, index) => {
+        const engine = plugs.engineById(plugMap[record.server]);
+        const server = plugs.serverById(record.server);
+        const meta = [server.label, engine.label, record.location || record.pointer || record.file]
+          .filter(Boolean)
+          .join(" · ");
+        const thumb = record.src
+          ? `<img alt="" src="${escapeHtml(record.src)}" />`
+          : `<span class="plug-hit-fill"></span>`;
+        return `
+        <li>
+          <button class="plug-hit" type="button" data-plug-hit="${index}">
+            ${thumb}
+            <span>
+              <strong>${escapeHtml(record.title || record.caption || record.file || "Plate")}</strong>
+              <span>${escapeHtml(meta)}</span>
+            </span>
+          </button>
+        </li>`;
+      })
+      .join("");
+  }
+  if (els.plugStatus) {
+    els.plugStatus.textContent = `${plugHits.length} hit${plugHits.length === 1 ? "" : "s"} across ${live} plugged server${live === 1 ? "" : "s"}`;
+  }
+}
+
+async function openPlugMenu() {
+  if (!els.plugMenu) return;
+  els.plugMenu.hidden = false;
+  paintPlugBay();
+  await paintPlugHits();
+  els.plugQuery?.focus();
+}
+
+function closePlugMenu() {
+  if (els.plugMenu) els.plugMenu.hidden = true;
+}
+
+async function setPlugEngine(serverId, engineId) {
+  plugMap = plugs.normalizePlugs({ ...plugMap, [serverId]: engineId });
+  paintPlugBay();
+  await plugs.savePlugs(plugMap);
+  await paintPlugHits();
+}
+
+async function resetPlugs() {
+  plugMap = plugs.defaultPlugs();
+  paintPlugBay();
+  await plugs.savePlugs(plugMap);
+  await paintPlugHits();
+}
+
+function openPlugHit(index) {
+  const record = plugHits[index];
+  if (!record) return;
+  closePlugMenu();
+  if (record.server === "eth" && (record.pointer || record.address)) {
+    if (els.ethPointerInput) els.ethPointerInput.value = record.pointer || record.address;
+    void openEthShard(record.pointer || record.address);
+    return;
+  }
+  if (record.server === "canvas" && record.src) {
+    insertDecodedPlate({
+      id: record.id || `canvas/${record.file || index}`,
+      src: record.src,
+      thumb: record.src,
+      hero: record.src,
+      title: record.title || record.caption || "Post",
+      local: true,
+      category: "canvas",
+    });
+    return;
+  }
+  const photo = record.photo;
+  if (photo && state.photos.some((item) => item.id === photo.id)) {
+    openViewer(photo.id);
+    return;
+  }
+  if (photo) {
+    insertDecodedPlate({
+      ...photo,
+      featured: true,
+      category: photo.category || record.server,
+    });
+  }
+}
+
 function shortAddress(value) {
   const text = String(value || "");
   if (text.length < 16) return text;
@@ -1414,6 +1580,13 @@ function onKey(event) {
     }
     return;
   }
+  if (els.plugMenu && !els.plugMenu.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePlugMenu();
+    }
+    return;
+  }
   if (els.skinEditor && !els.skinEditor.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1437,6 +1610,13 @@ function onKey(event) {
     event.preventDefault();
     if (els.skinEditor?.hidden === false) closeSkinEditor();
     else openSkinEditor();
+    return;
+  }
+  if (event.key === "i" || event.key === "I") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    if (els.plugMenu?.hidden === false) closePlugMenu();
+    else void openPlugMenu();
     return;
   }
   if (event.key === "b" || event.key === "B") {
@@ -2367,6 +2547,7 @@ async function wire() {
   }
   paintCacheCard(await loadMergedSession());
   await theme.restoreSkin();
+  plugMap = await plugs.restorePlugs();
   if (appMode && !fromApi && !fromCache) showOpener();
   else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
@@ -2478,6 +2659,23 @@ async function wire() {
   });
   els.ethShard?.addEventListener("click", (event) => {
     if (event.target === els.ethShard) closeEthOverlay();
+  });
+  els.plugBtn?.addEventListener("click", () => void openPlugMenu());
+  document.getElementById("plugClose")?.addEventListener("click", closePlugMenu);
+  document.getElementById("plugReset")?.addEventListener("click", () => void resetPlugs());
+  els.plugMenu?.addEventListener("click", (event) => {
+    if (event.target === els.plugMenu) closePlugMenu();
+  });
+  els.plugQuery?.addEventListener("input", () => void paintPlugHits());
+  els.plugBay?.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-plug-server]");
+    if (!select) return;
+    void setPlugEngine(select.dataset.plugServer, select.value);
+  });
+  els.plugHits?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-plug-hit]");
+    if (!btn) return;
+    openPlugHit(Number(btn.dataset.plugHit));
   });
   document.getElementById("skinClose")?.addEventListener("click", closeSkinEditor);
   document.getElementById("skinReset")?.addEventListener("click", () => {
@@ -2605,6 +2803,10 @@ function apertureHandleBack() {
   }
   if (els.ethShard && !els.ethShard.hidden) {
     closeEthOverlay();
+    return true;
+  }
+  if (els.plugMenu && !els.plugMenu.hidden) {
+    closePlugMenu();
     return true;
   }
   if (els.canvasBoard && !els.canvasBoard.hidden) {

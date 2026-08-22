@@ -356,6 +356,25 @@ class CatalogStore(private val context: Context) {
         return data.put("ok", true)
     }
 
+    fun interfaceResponse(): WebResourceResponse {
+        return json(loadInterfaceObject())
+    }
+
+    fun loadInterface(): String {
+        return loadInterfaceObject().toString()
+    }
+
+    fun saveInterface(raw: String): JSONObject {
+        val data = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return JSONObject().put("ok", false)
+        }
+        val next = normalizeInterface(data)
+        prefs.edit().putString(KEY_INTERFACE, next.toString()).apply()
+        return next
+    }
+
     fun postsResponse(): WebResourceResponse {
         return json(postsListing())
     }
@@ -518,6 +537,39 @@ class CatalogStore(private val context: Context) {
             if (raw.isBlank()) JSONObject() else JSONObject(raw)
         } catch (_: Exception) {
             JSONObject()
+        }
+    }
+
+    private fun defaultInterfacePlugs(): JSONObject {
+        return JSONObject()
+            .put("catalog", "titles")
+            .put("demo", "titles")
+            .put("canvas", "captions")
+            .put("eth", "pointers")
+    }
+
+    private fun normalizeInterface(data: JSONObject): JSONObject {
+        val engines = setOf("off", "titles", "captions", "files", "pointers")
+        val base = defaultInterfacePlugs()
+        val plugs = data.optJSONObject("plugs") ?: data
+        val next = JSONObject()
+        for (server in listOf("catalog", "demo", "canvas", "eth")) {
+            val engine = plugs.optString(server).ifBlank { base.optString(server) }
+            next.put(server, if (engine in engines) engine else base.optString(server))
+        }
+        return JSONObject().put("ok", true).put("plugs", next)
+    }
+
+    private fun loadInterfaceObject(): JSONObject {
+        return try {
+            val raw = prefs.getString(KEY_INTERFACE, "").orEmpty()
+            if (raw.isBlank()) {
+                normalizeInterface(JSONObject())
+            } else {
+                normalizeInterface(JSONObject(raw))
+            }
+        } catch (_: Exception) {
+            normalizeInterface(JSONObject())
         }
     }
 
@@ -1069,6 +1121,7 @@ class CatalogStore(private val context: Context) {
         private const val KEY_COUNT = "photoCount"
         private const val KEY_RECENTS = "recents"
         private const val KEY_SKIN = "skin"
+        private const val KEY_INTERFACE = "interface"
         private const val KEY_ETH = "ethShard"
         private const val KEY_ETH_SECRET = "ethSecret"
         private const val KEY_POSTS = "canvasPosts"

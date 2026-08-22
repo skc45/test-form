@@ -49,6 +49,12 @@
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
               </svg>
             </button>
+            <button class="icon-btn" id="plugBtn" type="button" aria-label="Open interface" title="Plug servers">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3v6M16 3v6M6 9h12v4.2A6 6 0 0112 21a6 6 0 01-6-7.8V9z" />
+                <path d="M12 21v3" />
+              </svg>
+            </button>
             <button class="icon-btn" id="ethBtn" type="button" aria-label="Attach as Ethereum NFT" title="Attach as NFT">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 2.4l7.2 9.4L12 21.6 4.8 11.8 12 2.4z" />
@@ -93,7 +99,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <button class="canvas-bar" id="canvasBar" type="button">
@@ -167,13 +173,14 @@
           <div><dt>Esc</dt><dd>Close viewer</dd></div>
           <div><dt>D</dt><dd>Download plate</dd></div>
           <div><dt>Long-press</dt><dd>Crop, then post on Canvasboard</dd></div>
+          <div><dt>I</dt><dd>Interface</dd></div>
           <div><dt>B</dt><dd>Canvasboard</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board.</p>
+        <p class="help-foot">Open a folder to browse plates. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board. Plug image servers into search engines from the Interface menu.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>
@@ -255,6 +262,24 @@
         <div class="opener-actions">
           <button class="text-btn opener-primary" id="canvasNftAll" type="button">Attach as NFT</button>
           <button class="text-btn" id="canvasClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="plug-menu" id="plugMenu" hidden>
+      <div class="plug-card">
+        <p class="help-kicker">Interface</p>
+        <h2>Plug servers</h2>
+        <p class="plug-status" id="plugStatus">Plug an image server into a search engine, then search those plugs.</p>
+        <label class="plug-search">
+          <span class="sr-only">Search plugged engines</span>
+          <input id="plugQuery" type="search" placeholder="Search plugged engines…" autocomplete="off" />
+        </label>
+        <div class="plug-bay" id="plugBay"></div>
+        <ol class="plug-hits" id="plugHits"></ol>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="plugReset" type="button">Reset plugs</button>
+          <button class="text-btn" id="plugClose" type="button">Close</button>
         </div>
       </div>
     </div>

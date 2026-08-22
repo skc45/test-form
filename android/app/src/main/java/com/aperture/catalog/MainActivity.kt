@@ -103,6 +103,7 @@ class MainActivity : AppCompatActivity() {
                             store.cacheResponse()
                         }
                         path == "/api/skin" && request.method == "GET" -> store.skinResponse()
+                        path == "/api/interface" && request.method == "GET" -> store.interfaceResponse()
                         path == "/api/eth" && request.method == "GET" -> store.ethResponse()
                         path == "/api/posts" && request.method == "GET" -> store.postsResponse()
                         path.startsWith("/api/eth/nft/") -> {
@@ -249,6 +250,16 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun saveSkin(json: String): String {
             return store.saveSkin(json).toString()
+        }
+
+        @JavascriptInterface
+        fun loadInterface(): String {
+            return store.loadInterface()
+        }
+
+        @JavascriptInterface
+        fun saveInterface(json: String): String {
+            return store.saveInterface(json).toString()
         }
 
         @JavascriptInterface

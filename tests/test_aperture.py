@@ -117,6 +117,9 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b'id="ethBar"', body)
         self.assertIn(b"Open NFT", body)
         self.assertNotIn(b"searches the catalog", body)
+        self.assertIn(b'id="plugMenu"', body)
+        self.assertIn(b'id="plugBtn"', body)
+        self.assertIn(b"Plug servers", body)
         self.assertNotIn(b'id="xrpLedger"', body)
         self.assertNotIn(b"Encode onto XRP", body)
 
@@ -475,6 +478,61 @@ class SkinTests(unittest.TestCase):
             self.assertEqual(saved["skyMid"], "#e07858")
             self.assertEqual(app.load_skin()["skyMid"], "#e07858")
             self.assertEqual(app.load_skin()["sheen"], 0.4)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class InterfaceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.environ.get("APERTURE_CACHE_DIR")
+        os.environ["APERTURE_CACHE_DIR"] = str(Path(self.tmp.name) / "cache")
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("APERTURE_CACHE_DIR", None)
+        else:
+            os.environ["APERTURE_CACHE_DIR"] = self.old
+        self.tmp.cleanup()
+
+    def test_normalize_rejects_unknown_engines(self):
+        payload = app.normalize_interface({"plugs": {"catalog": "fulltext", "eth": "pointers"}})
+        self.assertEqual(payload["plugs"]["catalog"], "titles")
+        self.assertEqual(payload["plugs"]["eth"], "pointers")
+        self.assertEqual(payload["plugs"]["canvas"], "captions")
+        self.assertTrue(payload["ok"])
+
+    def test_interface_http_roundtrip(self):
+        photos = Path(self.tmp.name) / "album"
+        photos.mkdir()
+        (photos / "keep.png").write_bytes(TINY_PNG)
+        server = app.run_server(photos, 0)
+        host, port = server.server_address
+        try:
+            conn = HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/interface")
+            response = conn.getresponse()
+            payload = json.loads(response.read())
+            conn.close()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(payload["plugs"]["catalog"], "titles")
+            self.assertEqual(payload["plugs"]["demo"], "titles")
+            self.assertEqual(payload["plugs"]["canvas"], "captions")
+            self.assertEqual(payload["plugs"]["eth"], "pointers")
+            self.assertNotIn("hits", payload)
+
+            conn = HTTPConnection(host, port, timeout=5)
+            body = json.dumps({"plugs": {"catalog": "files", "demo": "off", "canvas": "captions", "eth": "pointers"}})
+            conn.request("POST", "/api/interface", body, {"Content-Type": "application/json"})
+            posted = conn.getresponse()
+            saved = json.loads(posted.read())
+            conn.close()
+            self.assertEqual(posted.status, 200)
+            self.assertEqual(saved["plugs"]["catalog"], "files")
+            self.assertEqual(saved["plugs"]["demo"], "off")
+            self.assertEqual(app.load_interface()["plugs"]["catalog"], "files")
+            self.assertEqual(app.load_interface()["plugs"]["demo"], "off")
         finally:
             server.shutdown()
             server.server_close()
