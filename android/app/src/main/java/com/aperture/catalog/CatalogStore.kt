@@ -524,6 +524,22 @@ class CatalogStore(private val context: Context) {
         return next
     }
 
+    fun loadBobble(): String {
+        val enabled = if (prefs.contains(KEY_BOBBLE)) prefs.getBoolean(KEY_BOBBLE, true) else true
+        return JSONObject().put("enabled", enabled).toString()
+    }
+
+    fun saveBobble(raw: String): JSONObject {
+        val data = try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            return JSONObject().put("ok", false)
+        }
+        val enabled = data.optBoolean("enabled", true)
+        prefs.edit().putBoolean(KEY_BOBBLE, enabled).apply()
+        return JSONObject().put("ok", true).put("enabled", enabled)
+    }
+
     fun postsResponse(): WebResourceResponse {
         return json(postsListing())
     }
@@ -1307,6 +1323,7 @@ class CatalogStore(private val context: Context) {
         private const val KEY_RECENTS = "recents"
         private const val KEY_SKIN = "skin"
         private const val KEY_INTERFACE = "interface"
+        private const val KEY_BOBBLE = "bobble"
         private const val KEY_ETH = "ethShard"
         private const val KEY_ETH_SECRET = "ethSecret"
         private const val KEY_POSTS = "canvasPosts"

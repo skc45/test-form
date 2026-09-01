@@ -21,16 +21,16 @@
   <body>
     <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
       <defs>
-        <filter id="sd-bobble" x="-42%" y="-42%" width="184%" height="184%" color-interpolation-filters="sRGB">
-          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.011 0.02" numOctaves="3" seed="3" result="noise">
-            <animate attributeName="baseFrequency" dur="2.6s" values="0.01 0.02;0.026 0.01;0.01 0.02" repeatCount="indefinite" />
-          </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="20" xChannelSelector="R" yChannelSelector="G" result="wobble" />
-          <feMorphology in="SourceAlpha" operator="dilate" radius="4" result="edge" />
-          <feComposite in="wobble" in2="edge" operator="in" result="filled" />
-          <feComponentTransfer in="filled">
-            <feFuncA type="linear" slope="12" intercept="0" />
+        <filter id="sd-bobble" x="-48%" y="-48%" width="196%" height="196%" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="2.4" result="blur" />
+          <feComponentTransfer in="blur" result="soft">
+            <feFuncA type="linear" slope="1.55" intercept="-0.12" />
           </feComponentTransfer>
+          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.016 0.022" numOctaves="2" seed="3" result="noise">
+            <animate attributeName="baseFrequency" dur="3.2s" values="0.014 0.022;0.022 0.014;0.014 0.022" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G" result="wobble" />
+          <feComposite in="wobble" in2="soft" operator="in" />
         </filter>
       </defs>
     </svg>
@@ -62,6 +62,12 @@
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="12" cy="12" r="4" />
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable bobble" title="Bobble on">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="7" width="16" height="12" rx="2" />
+                <ellipse cx="12" cy="10" rx="5" ry="6.4" />
               </svg>
             </button>
             <button class="icon-btn" id="plugBtn" type="button" aria-label="Open interface" title="Plug servers">
@@ -115,7 +121,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> bobble</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <button class="canvas-bar" id="canvasBar" type="button">
@@ -196,6 +202,7 @@
           <div><dt>B</dt><dd>Canvasboard</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
+          <div><dt>P</dt><dd>Bobble on / off</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>

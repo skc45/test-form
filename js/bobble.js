@@ -1,13 +1,16 @@
 const cache = new Map();
 const pending = new Map();
+const hosts = new Set();
 let faceDetector = null;
 const queue = [];
 let busy = false;
+let enabled = true;
 
 const SCAN_SIZE = 192;
 const FACE_SCORE_MIN = 18;
 const MAX_MODELS = 6;
 const DEFAULT_FACE = { x: 0.18, y: 0.06, w: 0.64, h: 0.72, score: 1, assumed: true };
+const BOBBLE_KEY = "aperture-bobble";
 
 function assumedFace() {
   return { ...DEFAULT_FACE };
@@ -15,6 +18,49 @@ function assumedFace() {
 
 export function prefersBobbleMotion() {
   return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+export function isBobbleEnabled() {
+  return enabled;
+}
+
+export function canPaintBobbles() {
+  return enabled && prefersBobbleMotion();
+}
+
+export async function restoreBobble() {
+  if (window.ApertureAndroid?.loadBobble) {
+    try {
+      const raw = window.ApertureAndroid.loadBobble();
+      if (raw) {
+        enabled = JSON.parse(raw).enabled !== false;
+        persistLocal(enabled);
+        applyEnabled();
+        return enabled;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    const data = JSON.parse(localStorage.getItem(BOBBLE_KEY) || "{}");
+    if (typeof data.enabled === "boolean") enabled = data.enabled;
+  } catch {
+    enabled = true;
+  }
+  applyEnabled();
+  return enabled;
+}
+
+export function setBobbleEnabled(on) {
+  enabled = Boolean(on);
+  persist(enabled);
+  applyEnabled();
+  return enabled;
+}
+
+export function toggleBobble() {
+  return setBobbleEnabled(!enabled);
 }
 
 export async function detectModels(img) {
@@ -38,13 +84,52 @@ export async function detectModels(img) {
 }
 
 export function attachBobbles(host, img) {
-  if (!host || !img || !prefersBobbleMotion()) return;
+  if (!host || !img) return;
+  hosts.add(host);
+  host._bobbleImg = img;
+  if (!canPaintBobbles()) {
+    clearHost(host);
+    return;
+  }
   const run = () => {
     void paintBobbles(host, img);
   };
   const start = () => waitForBox(img, run);
   if (img.complete && img.naturalWidth) start();
   else img.addEventListener("load", start, { once: true });
+}
+
+function persist(on) {
+  const body = JSON.stringify({ enabled: on });
+  persistLocal(on);
+  window.ApertureAndroid?.saveBobble?.(body);
+}
+
+function persistLocal(on) {
+  try {
+    localStorage.setItem(BOBBLE_KEY, JSON.stringify({ enabled: on }));
+  } catch {
+    /* quota */
+  }
+}
+
+function applyEnabled() {
+  document.body.classList.toggle("bobble-off", !enabled);
+  for (const host of [...hosts]) {
+    if (!host.isConnected) {
+      hosts.delete(host);
+      continue;
+    }
+    const img = host._bobbleImg;
+    if (!enabled || !img) clearHost(host);
+    else attachBobbles(host, img);
+  }
+}
+
+function clearHost(host) {
+  const layer = host.querySelector(":scope > .bobble-layer");
+  if (layer) layer.replaceChildren();
+  host.classList.remove("has-bobble");
 }
 
 function waitForBox(img, fn, tries = 0) {

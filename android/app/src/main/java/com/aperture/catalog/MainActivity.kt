@@ -278,6 +278,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun loadBobble(): String {
+            return store.loadBobble()
+        }
+
+        @JavascriptInterface
+        fun saveBobble(json: String): String {
+            return store.saveBobble(json).toString()
+        }
+
+        @JavascriptInterface
         fun ethShard(): String {
             return store.ethShard().toString()
         }

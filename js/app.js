@@ -82,6 +82,7 @@ const els = {
   postSend: document.getElementById("postSend"),
   postShare: document.getElementById("postShare"),
   themeBtn: document.getElementById("themeBtn"),
+  bobbleBtn: document.getElementById("bobbleBtn"),
   ethBtn: document.getElementById("ethBtn"),
   canvasBar: document.getElementById("canvasBar"),
   canvasCopy: document.getElementById("canvasCopy"),
@@ -1651,6 +1652,12 @@ function onKey(event) {
     else void openEthOverlay();
     return;
   }
+  if (event.key === "p" || event.key === "P") {
+    if (event.target.matches("input, textarea")) return;
+    event.preventDefault();
+    toggleBobbleEffect();
+    return;
+  }
   if (event.key === "o" || event.key === "O") {
     if (event.target.matches("input, textarea")) return;
     event.preventDefault();
@@ -1705,6 +1712,19 @@ function toggleCover() {
   state.cover = !state.cover;
   els.viewer.classList.toggle("is-cover", state.cover);
   resetView();
+}
+
+function toggleBobbleEffect() {
+  bobble.toggleBobble();
+  syncBobbleButton();
+}
+
+function syncBobbleButton() {
+  const on = bobble.isBobbleEnabled();
+  els.bobbleBtn?.setAttribute("aria-pressed", on ? "true" : "false");
+  els.bobbleBtn?.setAttribute("aria-label", on ? "Disable bobble" : "Enable bobble");
+  if (els.bobbleBtn) els.bobbleBtn.title = on ? "Bobble on" : "Bobble off";
+  els.bobbleBtn?.classList.toggle("is-off", !on);
 }
 
 async function toggleFullscreen() {
@@ -2694,6 +2714,8 @@ async function wire() {
   paintCacheCard(await loadMergedSession());
   await theme.restoreSkin();
   plugMap = await plugs.restorePlugs();
+  await bobble.restoreBobble();
+  syncBobbleButton();
   if (appMode && !fromApi && !fromCache) showOpener();
   else if (!fromApi && !fromCache && (await loadMergedSession()).source === "folder") showOpener();
 
@@ -2779,6 +2801,7 @@ async function wire() {
     if (event.target === els.postForm) closePostForm();
   });
   els.themeBtn?.addEventListener("click", openSkinEditor);
+  els.bobbleBtn?.addEventListener("click", toggleBobbleEffect);
   els.ethBtn?.addEventListener("click", () => void openEthOverlay());
   els.canvasBar?.addEventListener("click", () => void openCanvasBoard());
   document.getElementById("canvasClose")?.addEventListener("click", closeCanvasBoard);
