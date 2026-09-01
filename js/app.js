@@ -63,7 +63,7 @@ const els = {
   recentTabs: document.getElementById("recentTabs"),
   topbar: document.getElementById("topbar"),
   catalogHint: document.getElementById("catalogHint"),
-  downloadBar: document.getElementById("downloadBar"),
+  downloadsPermit: document.getElementById("downloadsPermit"),
   downloadCopy: document.getElementById("downloadCopy"),
   downloadFill: document.getElementById("downloadFill"),
   postForm: document.getElementById("postForm"),
@@ -116,6 +116,7 @@ let chromeTimer = 0;
 let downloadTimer = 0;
 let recentSlideTimer = 0;
 let downloadBusy = false;
+let downloadsPermitWait = null;
 let postBusy = false;
 let ethBusy = false;
 let canvasNftBusy = false;
@@ -1559,6 +1560,13 @@ function onHash() {
 }
 
 function onKey(event) {
+  if (els.downloadsPermit && !els.downloadsPermit.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDownloadsPermit(false);
+    }
+    return;
+  }
   if (els.cropForm && !els.cropForm.hidden) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1781,6 +1789,124 @@ function triggerSave(blob, filename) {
   window.setTimeout(() => URL.revokeObjectURL(href), 1500);
 }
 
+function nativeRequestDownloads() {
+  return new Promise((resolve) => {
+    window.apertureDownloadsPermission = (ok) => {
+      window.apertureDownloadsPermission = null;
+      resolve(ok === true || ok === "true");
+    };
+    window.ApertureAndroid.requestDownloads();
+  });
+}
+
+async function requestDownloadsGrant() {
+  if (window.ApertureAndroid?.requestDownloads) {
+    return nativeRequestDownloads();
+  }
+  if (window.showDirectoryPicker) {
+    try {
+      let dir;
+      try {
+        dir = await window.showDirectoryPicker({
+          id: "aperture-downloads",
+          mode: "readwrite",
+          startIn: "downloads",
+        });
+      } catch (error) {
+        if (error?.name === "AbortError") return false;
+        dir = await window.showDirectoryPicker({ id: "aperture-downloads", mode: "readwrite" });
+      }
+      await cache.saveDownloadsHandle(dir);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+  try {
+    localStorage.setItem("aperture-downloads", "granted");
+  } catch {
+    /* quota */
+  }
+  return true;
+}
+
+async function hasDownloadsAccess() {
+  if (window.ApertureAndroid?.hasDownloadsAccess) {
+    return Boolean(window.ApertureAndroid.hasDownloadsAccess());
+  }
+  const handle = await cache.loadDownloadsHandle();
+  if (handle) {
+    const permission = await cache.queryHandlePermission(handle, "readwrite");
+    if (permission === "granted") return true;
+    const next = await cache.requestHandlePermission(handle, "readwrite");
+    return next === "granted";
+  }
+  try {
+    return localStorage.getItem("aperture-downloads") === "granted";
+  } catch {
+    return false;
+  }
+}
+
+function closeDownloadsPermit(allowed = false) {
+  if (els.downloadsPermit) els.downloadsPermit.hidden = true;
+  const wait = downloadsPermitWait;
+  downloadsPermitWait = null;
+  wait?.(allowed);
+}
+
+function askDownloadsPermit() {
+  if (!els.downloadsPermit) return requestDownloadsGrant();
+  els.downloadsPermit.hidden = false;
+  return new Promise((resolve) => {
+    downloadsPermitWait = resolve;
+  });
+}
+
+async function allowDownloadsPermit() {
+  if (els.downloadsPermit) els.downloadsPermit.hidden = true;
+  const granted = await requestDownloadsGrant();
+  const wait = downloadsPermitWait;
+  downloadsPermitWait = null;
+  wait?.(granted);
+}
+
+async function ensureDownloadsAccess() {
+  if (await hasDownloadsAccess()) return true;
+  return askDownloadsPermit();
+}
+
+async function saveToDownloads(blob, filename) {
+  const handle = await cache.loadDownloadsHandle();
+  if (!handle) {
+    triggerSave(blob, filename);
+    return;
+  }
+  let dir = handle;
+  try {
+    dir = await handle.getDirectoryHandle("Aperture", { create: true });
+  } catch {
+    dir = handle;
+  }
+  const file = await dir.getFileHandle(filename, { create: true });
+  const writable = await file.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
+async function openDownloadsFolder() {
+  if (!(await ensureDownloadsAccess())) return;
+  if (window.ApertureAndroid?.openDownloads) {
+    window.ApertureAndroid.openDownloads();
+    return;
+  }
+  const handle = await cache.loadDownloadsHandle();
+  if (handle) {
+    await openDirectoryHandle(handle);
+    hideOpener();
+  }
+}
+
 function nativeDownload(src, filename) {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error("timeout")), 45000);
@@ -1790,7 +1916,7 @@ function nativeDownload(src, filename) {
         reject(new Error("native download failed"));
         return;
       }
-      setDownloadProgress(pct, pct >= 100 ? "Saved" : `Downloading… ${pct}%`);
+      setDownloadProgress(pct, pct >= 100 ? "Saved to Downloads" : `Downloading… ${pct}%`);
       if (pct >= 100) {
         window.clearTimeout(timer);
         resolve();
@@ -1809,9 +1935,13 @@ async function downloadCurrent() {
   const filename = downloadFilename(photo);
   setDownloadProgress(6, "Downloading…");
   try {
+    if (!(await ensureDownloadsAccess())) {
+      finishDownload(false, "Downloads permission needed");
+      return;
+    }
     if (window.ApertureAndroid?.download) {
       await nativeDownload(photo.src, filename);
-      finishDownload(true, "Saved");
+      finishDownload(true, "Saved to Downloads");
       return;
     }
     let blob;
@@ -1823,8 +1953,8 @@ async function downloadCurrent() {
       setDownloadProgress(70, "Downloading…");
       blob = await blobFromViewer();
     }
-    triggerSave(blob, filename);
-    finishDownload(true, "Saved");
+    await saveToDownloads(blob, filename);
+    finishDownload(true, "Saved to Downloads");
   } catch {
     finishDownload(false, "Could not download");
   }
@@ -2573,6 +2703,12 @@ async function wire() {
 
   els.folderBtn.addEventListener("click", openFolderOrRecents);
   document.getElementById("openerFolderBtn").addEventListener("click", openFolderPicker);
+  document.getElementById("openerDownloadsBtn")?.addEventListener("click", () => void openDownloadsFolder());
+  document.getElementById("downloadsAllow")?.addEventListener("click", () => void allowDownloadsPermit());
+  document.getElementById("downloadsDeny")?.addEventListener("click", () => closeDownloadsPermit(false));
+  els.downloadsPermit?.addEventListener("click", (event) => {
+    if (event.target === els.downloadsPermit) closeDownloadsPermit(false);
+  });
   document.getElementById("forgetBtn").addEventListener("click", forgetFolder);
   els.recentRow?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-recent]");
@@ -2793,6 +2929,10 @@ async function wire() {
 }
 
 function apertureHandleBack() {
+  if (els.downloadsPermit && !els.downloadsPermit.hidden) {
+    closeDownloadsPermit(false);
+    return true;
+  }
   if (!els.help.hidden) {
     els.help.hidden = true;
     return true;

@@ -225,20 +225,40 @@ export async function clearCache() {
   }
 }
 
-export async function queryHandlePermission(handle) {
+export async function queryHandlePermission(handle, mode = "read") {
   if (!handle?.queryPermission) return "prompt";
   try {
-    return await handle.queryPermission({ mode: "read" });
+    return await handle.queryPermission({ mode });
   } catch {
     return "prompt";
   }
 }
 
-export async function requestHandlePermission(handle) {
+export async function requestHandlePermission(handle, mode = "read") {
   if (!handle?.requestPermission) return "denied";
   try {
-    return await handle.requestPermission({ mode: "read" });
+    return await handle.requestPermission({ mode });
   } catch {
     return "denied";
+  }
+}
+
+const DOWNLOADS_HANDLE_KEY = "downloadsHandle";
+
+export async function saveDownloadsHandle(handle) {
+  if (!handle || !idbAvailable()) return;
+  try {
+    await idbOp("readwrite", (store) => store.put(handle, DOWNLOADS_HANDLE_KEY));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+export async function loadDownloadsHandle() {
+  if (!idbAvailable()) return null;
+  try {
+    return (await idbOp("readonly", (store) => store.get(DOWNLOADS_HANDLE_KEY))) || null;
+  } catch {
+    return null;
   }
 }

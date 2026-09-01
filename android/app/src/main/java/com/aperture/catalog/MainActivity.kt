@@ -1,12 +1,10 @@
 package com.aperture.catalog
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import androidx.core.content.FileProvider
 import android.webkit.JavascriptInterface
@@ -30,14 +28,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownload: Pair<String, String>? = null
+    private var pendingOpenDownloads = false
 
-    private val requestWrite = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        val pending = pendingDownload
-        pendingDownload = null
-        if (granted && pending != null) startDownload(pending.first, pending.second)
-        else notifyDownload(-1)
+    private val requestDownloads = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val granted = store.downloadsPermissions().all { permission ->
+            result[permission] == true || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) onDownloadsGranted()
+        else onDownloadsDenied()
     }
 
     private val pickFolder = registerForActivityResult(
@@ -207,13 +207,28 @@ class MainActivity : AppCompatActivity() {
         fun isNative(): Boolean = true
 
         @JavascriptInterface
+        fun hasDownloadsAccess(): Boolean = store.hasDownloadsAccess()
+
+        @JavascriptInterface
+        fun requestDownloads() {
+            runOnUiThread {
+                startDownloadsPermission()
+            }
+        }
+
+        @JavascriptInterface
+        fun openDownloads() {
+            runOnUiThread {
+                startDownloadsPermission(openAfter = true)
+            }
+        }
+
+        @JavascriptInterface
         fun download(url: String, filename: String) {
             runOnUiThread {
-                if (Build.VERSION.SDK_INT < 29 &&
-                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-                ) {
+                if (!store.hasDownloadsAccess()) {
                     pendingDownload = url to filename
-                    requestWrite.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    startDownloadsPermission()
                     return@runOnUiThread
                 }
                 startDownload(url, filename)
@@ -295,6 +310,47 @@ class MainActivity : AppCompatActivity() {
                 applyChrome(color)
             }
         }
+    }
+
+    private fun startDownloadsPermission(openAfter: Boolean = false) {
+        if (openAfter) pendingOpenDownloads = true
+        if (store.hasDownloadsAccess()) {
+            onDownloadsGranted()
+            return
+        }
+        val needed = store.downloadsPermissions().filter { permission ->
+            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isEmpty()) {
+            onDownloadsGranted()
+            return
+        }
+        requestDownloads.launch(needed.toTypedArray())
+    }
+
+    private fun onDownloadsGranted() {
+        notifyDownloads(true)
+        val pending = pendingDownload
+        pendingDownload = null
+        if (pending != null) startDownload(pending.first, pending.second)
+        if (pendingOpenDownloads) {
+            pendingOpenDownloads = false
+            if (store.openDownloads()) notifyCatalog()
+        }
+    }
+
+    private fun onDownloadsDenied() {
+        pendingOpenDownloads = false
+        pendingDownload = null
+        notifyDownloads(false)
+        notifyDownload(-1)
+    }
+
+    private fun notifyDownloads(granted: Boolean) {
+        webView.evaluateJavascript(
+            "window.apertureDownloadsPermission && window.apertureDownloadsPermission(${if (granted) "true" else "false"})",
+            null,
+        )
     }
 
     private fun startDownload(url: String, filename: String) {

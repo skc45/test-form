@@ -94,6 +94,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"Open folder", body)
         self.assertIn(b"Tap to download", body)
+        self.assertIn(b"Use Downloads", body)
+        self.assertIn(b'id="downloadsPermit"', body)
         self.assertIn(b"Attach as NFT", body)
         self.assertIn(b"Crop, then post on Canvasboard", body)
         self.assertIn(b'id="cropForm"', body)

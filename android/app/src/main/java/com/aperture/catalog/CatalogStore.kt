@@ -1,9 +1,13 @@
 package com.aperture.catalog
 
+import android.Manifest
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -34,6 +38,10 @@ class CatalogStore(private val context: Context) {
     fun restore() {
         val raw = prefs.getString(KEY_URI, "").orEmpty()
         if (raw.isBlank()) return
+        if (raw == DOWNLOADS_ID) {
+            if (hasDownloadsAccess()) scanDownloads()
+            return
+        }
         val uri = Uri.parse(raw)
         if (!hasPermission(uri)) return
         scan(uri)
@@ -82,6 +90,10 @@ class CatalogStore(private val context: Context) {
             val item = recents.getJSONObject(index)
             val raw = item.optString("path").ifBlank { item.optString("id") }
             if (raw.isBlank()) continue
+            if (raw == DOWNLOADS_ID) {
+                if (!hasDownloadsAccess()) continue
+                return openDownloads()
+            }
             val uri = Uri.parse(raw)
             if (!hasPermission(uri)) continue
             trees[raw] = uri
@@ -133,6 +145,24 @@ class CatalogStore(private val context: Context) {
         }
         if (raw.isBlank()) return notFound()
         val safePlate = plate.coerceAtLeast(0)
+        if (raw == DOWNLOADS_ID) {
+            if (!hasDownloadsAccess()) return notFound()
+            val current = prefs.getString(KEY_URI, "").orEmpty()
+            if (current == DOWNLOADS_ID && photos.isNotEmpty()) {
+                val photo = photos.getOrNull(safePlate.coerceAtMost(photos.lastIndex)) ?: return notFound()
+                return mediaResponse(photo.optString("id"))
+            }
+            val cover = downloadsImageAt(safePlate) ?: return notFound()
+            val stream = context.contentResolver.openInputStream(cover.first) ?: return notFound()
+            return WebResourceResponse(
+                cover.second,
+                null,
+                200,
+                "OK",
+                mapOf("Cache-Control" to "public, max-age=60"),
+                stream,
+            )
+        }
         val current = prefs.getString(KEY_URI, "").orEmpty()
         if (raw == current && photos.isNotEmpty() && currentTrees.size <= 1) {
             val photo = photos.getOrNull(safePlate.coerceAtMost(photos.lastIndex)) ?: return notFound()
@@ -197,6 +227,125 @@ class CatalogStore(private val context: Context) {
             photo.put("featured", index == 0)
         }
         prefs.edit().putInt(KEY_COUNT, photos.size).apply()
+    }
+
+    fun scanDownloads() {
+        photos.clear()
+        media.clear()
+        currentTrees.clear()
+        val items = queryDownloadsImages(DOWNLOADS_MAX)
+        items.forEachIndexed { index, item ->
+            val key = "downloads/${item.id}-${item.name}"
+            media[key] = item.uri to item.mime
+            val mediaPath = "/media/" + Uri.encode(key)
+            photos += JSONObject()
+                .put("id", key)
+                .put("index", index)
+                .put("title", item.name.substringBeforeLast("."))
+                .put("photographer", "Downloads")
+                .put("location", item.folder)
+                .put("year", item.year)
+                .put("category", slug(item.folder))
+                .put("src", mediaPath)
+                .put("thumb", mediaPath)
+                .put("hero", mediaPath)
+                .put("local", true)
+                .put("featured", index == 0)
+        }
+        val downloadsUri = Uri.parse(DOWNLOADS_ID)
+        prefs.edit()
+            .putString(KEY_URI, DOWNLOADS_ID)
+            .putString(KEY_NAME, "Downloads")
+            .putLong(KEY_OPENED, System.currentTimeMillis())
+            .putInt(KEY_COUNT, photos.size)
+            .apply()
+        upsertRecent(downloadsUri, "Downloads", photos.size)
+    }
+
+    private fun downloadsImageAt(index: Int): Pair<Uri, String>? {
+        return queryDownloadsImages(index + 1).getOrNull(index)?.let { it.uri to it.mime }
+    }
+
+    private data class DownloadsImage(
+        val id: Long,
+        val name: String,
+        val mime: String,
+        val uri: Uri,
+        val folder: String,
+        val year: Int,
+    )
+
+    @Suppress("DEPRECATION")
+    private fun queryDownloadsImages(limit: Int): List<DownloadsImage> {
+        if (limit <= 0) return emptyList()
+        val collection = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+        val projection = mutableListOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.DATE_MODIFIED,
+        )
+        val selection: String
+        val args: Array<String>
+        if (Build.VERSION.SDK_INT >= 29) {
+            projection += MediaStore.Images.Media.RELATIVE_PATH
+            selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+            args = arrayOf("${Environment.DIRECTORY_DOWNLOADS}%")
+        } else {
+            projection += MediaStore.Images.Media.DATA
+            selection = "${MediaStore.Images.Media.DATA} LIKE ?"
+            args = arrayOf("%/${Environment.DIRECTORY_DOWNLOADS}/%")
+        }
+        val out = mutableListOf<DownloadsImage>()
+        context.contentResolver.query(
+            collection,
+            projection.toTypedArray(),
+            selection,
+            args,
+            "${MediaStore.Images.Media.DATE_MODIFIED} DESC",
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val mimeCol = cursor.getColumnIndex(MediaStore.Images.Media.MIME_TYPE)
+            val dateCol = cursor.getColumnIndex(MediaStore.Images.Media.DATE_MODIFIED)
+            val pathCol = if (Build.VERSION.SDK_INT >= 29) {
+                cursor.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
+            } else {
+                cursor.getColumnIndex(MediaStore.Images.Media.DATA)
+            }
+            while (cursor.moveToNext() && out.size < limit) {
+                val name = cursor.getString(nameCol) ?: continue
+                if (!isImage(name)) continue
+                val id = cursor.getLong(idCol)
+                val mime = if (mimeCol >= 0) cursor.getString(mimeCol).orEmpty() else ""
+                val path = if (pathCol >= 0) cursor.getString(pathCol).orEmpty() else Environment.DIRECTORY_DOWNLOADS
+                val folder = downloadsFolderName(path)
+                val modified = if (dateCol >= 0) cursor.getLong(dateCol) * 1000L else 0L
+                val year = Calendar.getInstance().apply {
+                    if (modified > 0) timeInMillis = modified
+                }.get(Calendar.YEAR)
+                out += DownloadsImage(
+                    id = id,
+                    name = name,
+                    mime = mime.ifBlank { mimeFor(name) },
+                    uri = ContentUris.withAppendedId(collection, id),
+                    folder = folder,
+                    year = year,
+                )
+            }
+        }
+        return out
+    }
+
+    private fun downloadsFolderName(path: String): String {
+        val trimmed = path.trim('/').replace('\\', '/')
+        val parts = trimmed.split('/').filter { it.isNotBlank() }
+        if (parts.size <= 1) return "Downloads"
+        return parts.getOrNull(1) ?: "Downloads"
     }
 
     private fun walk(dir: DocumentFile, folderName: String, prefix: String, idPrefix: String = "") {
@@ -930,7 +1079,31 @@ class CatalogStore(private val context: Context) {
     }
 
     private fun hasPermission(uri: Uri): Boolean {
+        if (uri.toString() == DOWNLOADS_ID) return hasDownloadsAccess()
         return context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+    }
+
+    fun downloadsPermissions(): Array<String> {
+        return when {
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+            Build.VERSION.SDK_INT >= 29 -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            else -> arrayOf(
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+            )
+        }
+    }
+
+    fun hasDownloadsAccess(): Boolean {
+        return downloadsPermissions().all { permission ->
+            context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun openDownloads(): Boolean {
+        if (!hasDownloadsAccess()) return false
+        scanDownloads()
+        return true
     }
 
     private fun json(body: JSONObject): WebResourceResponse {
@@ -1052,29 +1225,41 @@ class CatalogStore(private val context: Context) {
         onProgress: (Int) -> Unit,
     ): Boolean {
         val name = safeDownloadName(filename, mime)
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, name)
-            put(MediaStore.Images.Media.MIME_TYPE, mime.ifBlank { mimeFor(name) })
-            if (Build.VERSION.SDK_INT >= 29) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Aperture")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime.ifBlank { mimeFor(name) })
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Aperture")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val dest = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+            return try {
+                resolver.openOutputStream(dest)?.use { output ->
+                    copyWithProgress(input, output, total, onProgress)
+                } ?: return false
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(dest, values, null, null)
+                onProgress(100)
+                true
+            } catch (_: Exception) {
+                resolver.delete(dest, null, null)
+                false
             }
         }
-        val resolver = context.contentResolver
-        val dest = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+        val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Aperture")
+        if (!folder.exists() && !folder.mkdirs()) return false
+        val dest = File(folder, name)
         return try {
-            resolver.openOutputStream(dest)?.use { output ->
+            dest.outputStream().use { output ->
                 copyWithProgress(input, output, total, onProgress)
-            } ?: return false
-            if (Build.VERSION.SDK_INT >= 29) {
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(dest, values, null, null)
             }
+            MediaScannerConnection.scanFile(context, arrayOf(dest.absolutePath), arrayOf(mime.ifBlank { mimeFor(name) }), null)
             onProgress(100)
             true
         } catch (_: Exception) {
-            resolver.delete(dest, null, null)
+            dest.delete()
             false
         }
     }
@@ -1125,6 +1310,8 @@ class CatalogStore(private val context: Context) {
         private const val KEY_ETH = "ethShard"
         private const val KEY_ETH_SECRET = "ethSecret"
         private const val KEY_POSTS = "canvasPosts"
+        const val DOWNLOADS_ID = "aperture://downloads"
+        private const val DOWNLOADS_MAX = 400
         private const val MAX_RECENTS = 3
         private const val MAX_RECENT_SLIDES = 8
         private const val ETH_MAX_PLATE = 25 * 1024 * 1024
