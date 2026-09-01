@@ -2040,12 +2040,13 @@ kbd {
   height: 118%;
   margin-top: -6%;
   border-radius: 48% 48% 42% 42%;
+  border: 6px solid #f4fbff;
   transform-origin: 50% 92%;
   opacity: 1;
   box-shadow:
-    0 0 0 3px #0b2744,
-    0 0 0 7px #ffffff,
+    0 0 0 6px #0b2744,
     0 0 0 12px #1a4e82,
+    inset 0 0 0 7px #0c2f54,
     0 18px 26px rgba(8, 28, 56, 0.72);
   animation: sd-bobble var(--bobble-dur, 2.4s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
@@ -2079,14 +2080,10 @@ kbd {
   pointer-events: none;
   opacity: 1;
   mix-blend-mode: normal;
+  background: none;
   box-shadow:
-    inset 0 0 0 6px #0f3358,
-    inset 0 0 0 11px #f7fcff;
-  background: repeating-conic-gradient(from 20deg, #d7ecff 0 10deg, #7ea9d4 10deg 20deg);
-  mask-image: radial-gradient(ellipse at 50% 48%, transparent 58%, #000 74%);
-  -webkit-mask-image: radial-gradient(ellipse at 50% 48%, transparent 58%, #000 74%);
-  animation: sd-grain 1.2s steps(6) infinite;
-  animation-delay: var(--delay, 0s);
+    inset 0 0 0 10px #ffffff,
+    inset 0 0 0 16px #143a62;
 }
 
 @keyframes sd-bobble {

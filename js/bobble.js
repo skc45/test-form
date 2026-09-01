@@ -42,8 +42,17 @@ export function attachBobbles(host, img) {
   const run = () => {
     void paintBobbles(host, img);
   };
-  if (img.complete && img.naturalWidth) run();
-  else img.addEventListener("load", run, { once: true });
+  const start = () => waitForBox(img, run);
+  if (img.complete && img.naturalWidth) start();
+  else img.addEventListener("load", start, { once: true });
+}
+
+function waitForBox(img, fn, tries = 0) {
+  if ((img.clientWidth > 8 && img.clientHeight > 8) || tries > 45) {
+    fn();
+    return;
+  }
+  requestAnimationFrame(() => waitForBox(img, fn, tries + 1));
 }
 
 async function paintBobbles(host, img) {
