@@ -106,6 +106,9 @@ class AndroidProjectTests(unittest.TestCase):
         bobble_js = (ROOT / "js" / "bobble.js").read_text(encoding="utf-8")
         self.assertIn("detectModels", bobble_js)
         self.assertIn("FaceDetector", bobble_js)
+        self.assertIn("detectByFeatures", bobble_js)
+        self.assertIn("faceScore", bobble_js)
+        self.assertIn("integralImage", bobble_js)
         self.assertIn("attachBobbles", bobble_js)
 
     def test_recent_plates_in_opener(self):
