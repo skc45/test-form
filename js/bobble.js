@@ -68,10 +68,7 @@ function mountModels(host, img, layer, models) {
     model.style.setProperty("--bobble-dur", `${(2.15 + (index % 4) * 0.28).toFixed(2)}s`);
     const cut = document.createElement("span");
     cut.className = "bobble-cut";
-    cut.style.backgroundImage = `url("${cssUrl(img.currentSrc || img.src)}")`;
-    cut.style.backgroundColor = "#16385c";
-    cut.style.backgroundSize = `${(100 / (box.width / 100)).toFixed(3)}% ${(100 / (box.height / 100)).toFixed(3)}%`;
-    cut.style.backgroundPosition = `${(-(box.left / box.width) * 100).toFixed(3)}% ${(-(box.top / box.height) * 100).toFixed(3)}%`;
+    cut.appendChild(cutImage(img, box));
     model.appendChild(cut);
     layer.appendChild(model);
   });
@@ -89,8 +86,19 @@ function layerFor(host) {
   return layer;
 }
 
-function cssUrl(src) {
-  return String(src || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function cutImage(img, box) {
+  const face = document.createElement("img");
+  face.className = "bobble-face";
+  face.alt = "";
+  face.draggable = false;
+  face.decoding = "async";
+  if (img.crossOrigin) face.crossOrigin = img.crossOrigin;
+  face.src = img.currentSrc || img.src;
+  face.style.width = `${(100 / (box.width / 100)).toFixed(3)}%`;
+  face.style.height = `${(100 / (box.height / 100)).toFixed(3)}%`;
+  face.style.left = `${(-(box.left / box.width) * 100).toFixed(3)}%`;
+  face.style.top = `${(-(box.top / box.height) * 100).toFixed(3)}%`;
+  return face;
 }
 
 function displayBoxes(img, models) {
@@ -126,11 +134,11 @@ function displayBoxes(img, models) {
 
 async function measureModels(img) {
   const apiFaces = await detectFaces(img);
-  const structured = await enqueue(() => detectByFeatures(img));
-  const found = nms([...apiFaces, ...structured], MAX_MODELS, 0.32).map((box) =>
-    expand(box, box.fromApi ? 0.1 : 0.06),
-  );
-  return found.length ? found : [assumedFace()];
+  const real = nms(apiFaces, MAX_MODELS, 0.32)
+    .map((box) => expand(box, 0.1))
+    .filter(validBox);
+  if (real.length) return real;
+  return [assumedFace()];
 }
 
 async function detectFaces(img) {

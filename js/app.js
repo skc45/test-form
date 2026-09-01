@@ -51,6 +51,7 @@ const els = {
   heroMeta: document.getElementById("heroMeta"),
   heroIndex: document.getElementById("heroIndex"),
   viewer: document.getElementById("viewer"),
+  viewerFrame: document.getElementById("viewerFrame"),
   viewerImage: document.getElementById("viewerImage"),
   viewerTitle: document.getElementById("viewerTitle"),
   viewerMeta: document.getElementById("viewerMeta"),
@@ -484,7 +485,8 @@ function renderFilmstrip(photos) {
 
 function applyTransform() {
   const { zoom, panX, panY } = state;
-  els.viewerImage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  const frame = els.viewerFrame || els.viewerImage;
+  frame.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
 }
 
 function resetView() {
@@ -507,6 +509,7 @@ function showIndex(index) {
   els.counter.textContent = `${state.activeIndex + 1} / ${photos.length}`;
   els.viewerImage.classList.remove("is-ready");
   bindImage(els.viewerImage, photo, "full");
+  bobble.attachBobbles(els.viewerFrame, els.viewerImage);
   els.viewerImage.addEventListener(
     "load",
     () => els.viewer.classList.remove("is-loading"),

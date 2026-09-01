@@ -112,6 +112,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("attachBobbles", bobble_js)
         self.assertIn("DEFAULT_FACE", bobble_js)
         self.assertIn("assumedFace", bobble_js)
+        self.assertIn("bobble-face", bobble_js)
+        self.assertIn("viewerFrame", app_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -149,6 +151,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn('scale="20"', html)
         self.assertIn('operator="dilate"', html)
         self.assertIn('id="heroBobble"', html)
+        self.assertIn('id="viewerBobble"', html)
+        self.assertIn('id="viewerFrame"', html)
         self.assertIn('id="ethShard"', html)
         self.assertIn("Attach as NFT", html)
         self.assertIn('id="canvasBar"', html)
