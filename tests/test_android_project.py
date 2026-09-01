@@ -193,7 +193,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("sd-bobble", css)
         self.assertIn("bobble-off", css)
         self.assertIn("drop-shadow", css)
-        self.assertIn("radial-gradient(ellipse 50% 48%", css)
+        self.assertIn("radial-gradient(ellipse 50% 48% at 50% 46%, #000 82%", css)
         self.assertIn("card-photo", css)
         self.assertIn("--sky", css)
         self.assertIn("Search titles, places", html)

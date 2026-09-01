@@ -25,7 +25,7 @@ export function isBobbleEnabled() {
 }
 
 export function canPaintBobbles() {
-  return enabled && prefersBobbleMotion();
+  return enabled;
 }
 
 export async function restoreBobble() {
