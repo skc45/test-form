@@ -3,6 +3,7 @@ import * as cache from "./data.js";
 import * as theme from "./theme.js";
 import * as eth from "./eth.js";
 import * as plugs from "./interface.js";
+import * as bobble from "./bobble.js";
 
 theme.bootSkin();
 
@@ -406,6 +407,7 @@ function renderHero() {
   }
   els.hero.hidden = false;
   bindImage(els.heroImg, featured, "hero");
+  bobble.attachBobbles(els.heroBtn, els.heroImg);
   els.heroTitle.textContent = featured.title;
   els.heroMeta.textContent = photoMeta(featured);
   els.heroIndex.textContent = `Plate ${plateNumber(featured.index)}`;
@@ -432,7 +434,10 @@ function renderCatalog() {
       (photo) => `
       <button class="card" type="button" role="listitem" data-id="${photo.id}">
         <span class="card-index">${plateNumber(photo.index)}</span>
-        <img alt="" />
+        <span class="card-photo">
+          <img alt="" />
+          <span class="bobble-layer" aria-hidden="true"></span>
+        </span>
         <span class="card-meta">
           <strong>${photo.title}</strong>
           <span>${photo.location || photo.category}</span>
@@ -443,7 +448,9 @@ function renderCatalog() {
 
   [...els.catalog.querySelectorAll(".card")].forEach((card, i) => {
     const photo = photos[i];
-    bindImage(card.querySelector("img"), photo);
+    const image = card.querySelector("img");
+    bindImage(image, photo);
+    bobble.attachBobbles(card.querySelector(".card-photo"), image);
     card.addEventListener("click", () => {
       if (longPressConsumed()) return;
       openViewer(photo.id);
@@ -2423,7 +2430,10 @@ function paintCanvasBoard(listing) {
       return `
       <article class="canvas-plate">
         <button class="canvas-open" type="button" data-canvas-open="${index}">
-          <img src="${escapeHtml(post.src || "")}" alt="${escapeHtml(title)}" />
+          <span class="card-photo">
+            <img src="${escapeHtml(post.src || "")}" alt="${escapeHtml(title)}" />
+            <span class="bobble-layer" aria-hidden="true"></span>
+          </span>
         </button>
         ${caption ? `<p class="canvas-caption">${escapeHtml(caption)}</p>` : ""}
         <p class="canvas-nft${pointer ? " is-attached" : ""}">${escapeHtml(nftLabel)}</p>
@@ -2433,6 +2443,9 @@ function paintCanvasBoard(listing) {
       </article>`;
     })
     .join("");
+  els.canvasWall.querySelectorAll(".canvas-open").forEach((open) => {
+    bobble.attachBobbles(open.querySelector(".card-photo"), open.querySelector("img"));
+  });
 }
 
 function photoFromCanvasPost(post, index) {

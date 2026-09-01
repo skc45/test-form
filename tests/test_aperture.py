@@ -122,6 +122,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="plugMenu"', body)
         self.assertIn(b'id="plugBtn"', body)
         self.assertIn(b"Plug servers", body)
+        self.assertIn(b'id="sd-bobble"', body)
         self.assertNotIn(b'id="xrpLedger"', body)
         self.assertNotIn(b"Encode onto XRP", body)
 

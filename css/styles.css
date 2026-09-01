@@ -495,7 +495,17 @@ kbd {
   opacity: 1;
 }
 
+.hero-frame .bobble-layer {
+  transform: scale(1.02);
+  transform-origin: center center;
+  transition: transform 1.4s var(--ease);
+}
+
 .hero-frame:hover img {
+  transform: scale(1.06);
+}
+
+.hero-frame:hover .bobble-layer {
   transform: scale(1.06);
 }
 
@@ -576,6 +586,18 @@ kbd {
   aspect-ratio: 4 / 5;
 }
 
+.card-photo {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: inherit;
+  transition: transform 0.7s var(--ease);
+}
+
+.catalog.grid .card-photo {
+  height: 100%;
+}
+
 .card img {
   width: 100%;
   height: auto;
@@ -594,13 +616,14 @@ kbd {
   transform: none;
 }
 
-.card:hover img {
+.card:hover .card-photo {
   transform: scale(1.04);
 }
 
 .card-meta {
   position: absolute;
   inset: auto 0 0;
+  z-index: 3;
   padding: 2.4rem 0.9rem 0.85rem;
   background: linear-gradient(180deg, transparent, rgba(12, 50, 95, 0.72));
   opacity: 0;
@@ -634,6 +657,7 @@ kbd {
   position: absolute;
   top: 0.7rem;
   left: 0.8rem;
+  z-index: 3;
   text-shadow: 0 8px 20px #000;
 }
 
@@ -1759,6 +1783,10 @@ kbd {
   cursor: pointer;
 }
 
+.canvas-plate .card-photo {
+  border-radius: 6px;
+}
+
 .canvas-plate img {
   display: block;
   width: 100%;
@@ -1966,6 +1994,89 @@ kbd {
   color: var(--muted);
   font-size: 0.82rem;
   text-align: center;
+}
+
+.sd-bobble-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.bobble-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bobble-model {
+  position: absolute;
+  left: var(--bx);
+  top: var(--by);
+  width: var(--bw);
+  height: var(--bh);
+  filter: url("#sd-bobble");
+}
+
+.bobble-cut {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 118%;
+  margin-top: -6%;
+  border-radius: 48% 48% 42% 42%;
+  background-repeat: no-repeat;
+  transform-origin: 50% 92%;
+  box-shadow:
+    0 10px 18px rgba(12, 50, 95, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  animation: sd-bobble var(--bobble-dur, 2.7s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+.bobble-cut::after {
+  content: "";
+  position: absolute;
+  inset: -12%;
+  border-radius: inherit;
+  background:
+    repeating-radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.22) 0 1px, transparent 1.5px 5px),
+    linear-gradient(180deg, rgba(186, 230, 255, 0.14), transparent 55%);
+  mix-blend-mode: overlay;
+  opacity: 0.42;
+  animation: sd-grain 1.6s steps(5) infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes sd-bobble {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-2.1deg) scale(1);
+  }
+  22% {
+    transform: translate3d(1.4%, -3.2%, 0) rotate(2.6deg) scale(1.035);
+  }
+  48% {
+    transform: translate3d(-0.8%, 1.6%, 0) rotate(-1.1deg) scale(1.012);
+  }
+  74% {
+    transform: translate3d(1.1%, -2.2%, 0) rotate(1.8deg) scale(1.024);
+  }
+}
+
+@keyframes sd-grain {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.32;
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0);
+    opacity: 0.5;
+  }
 }
 
 @keyframes spin {

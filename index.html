@@ -19,6 +19,16 @@
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
+    <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
+      <defs>
+        <filter id="sd-bobble" x="-24%" y="-24%" width="148%" height="148%">
+          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.018 0.03" numOctaves="2" seed="3" result="noise">
+            <animate attributeName="baseFrequency" dur="3.6s" values="0.016 0.03;0.03 0.016;0.016 0.03" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </defs>
+    </svg>
     <div class="aero-sky" aria-hidden="true"></div>
     <div class="app" id="app">
       <header class="topbar" id="topbar">
@@ -87,6 +97,7 @@
         <section class="hero" id="hero" aria-label="Featured plate">
           <button class="hero-frame" id="heroBtn" type="button">
             <img id="heroImg" alt="" />
+            <span class="bobble-layer" id="heroBobble" aria-hidden="true"></span>
             <div class="hero-veil"></div>
             <div class="hero-copy">
               <p class="hero-index" id="heroIndex">Plate 01</p>
