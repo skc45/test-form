@@ -7,6 +7,11 @@ let busy = false;
 const SCAN_SIZE = 192;
 const FACE_SCORE_MIN = 18;
 const MAX_MODELS = 6;
+const DEFAULT_FACE = { x: 0.18, y: 0.06, w: 0.64, h: 0.72, score: 1, assumed: true };
+
+function assumedFace() {
+  return { ...DEFAULT_FACE };
+}
 
 export function prefersBobbleMotion() {
   return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -14,18 +19,19 @@ export function prefersBobbleMotion() {
 
 export async function detectModels(img) {
   const src = img?.currentSrc || img?.src || "";
-  if (!src || !img?.naturalWidth) return [];
+  if (!src || !img?.naturalWidth) return [assumedFace()];
   if (cache.has(src)) return cache.get(src);
   if (pending.has(src)) return pending.get(src);
   const job = measureModels(img)
     .then((models) => {
-      cache.set(src, models);
+      const faces = models.length ? models : [assumedFace()];
+      cache.set(src, faces);
       pending.delete(src);
-      return models;
+      return faces;
     })
     .catch(() => {
       pending.delete(src);
-      return [];
+      return [assumedFace()];
     });
   pending.set(src, job);
   return job;
@@ -42,10 +48,14 @@ export function attachBobbles(host, img) {
 
 async function paintBobbles(host, img) {
   const layer = layerFor(host);
-  layer.replaceChildren();
-  host.classList.remove("has-bobble");
+  mountModels(host, img, layer, [assumedFace()]);
   const models = await detectModels(img);
-  if (!models.length || !host.isConnected) return;
+  if (!host.isConnected) return;
+  mountModels(host, img, layer, models.length ? models : [assumedFace()]);
+}
+
+function mountModels(host, img, layer, models) {
+  layer.replaceChildren();
   const fitted = displayBoxes(img, models);
   fitted.forEach((box, index) => {
     const model = document.createElement("span");
@@ -55,16 +65,17 @@ async function paintBobbles(host, img) {
     model.style.setProperty("--bw", `${box.width}%`);
     model.style.setProperty("--bh", `${box.height}%`);
     model.style.setProperty("--delay", `${(index * 0.37).toFixed(2)}s`);
-    model.style.setProperty("--bobble-dur", `${(2.45 + (index % 4) * 0.28).toFixed(2)}s`);
+    model.style.setProperty("--bobble-dur", `${(2.15 + (index % 4) * 0.28).toFixed(2)}s`);
     const cut = document.createElement("span");
     cut.className = "bobble-cut";
     cut.style.backgroundImage = `url("${cssUrl(img.currentSrc || img.src)}")`;
+    cut.style.backgroundColor = "#16385c";
     cut.style.backgroundSize = `${(100 / (box.width / 100)).toFixed(3)}% ${(100 / (box.height / 100)).toFixed(3)}%`;
     cut.style.backgroundPosition = `${(-(box.left / box.width) * 100).toFixed(3)}% ${(-(box.top / box.height) * 100).toFixed(3)}%`;
     model.appendChild(cut);
     layer.appendChild(model);
   });
-  host.classList.add("has-bobble");
+  host.classList.toggle("has-bobble", Boolean(fitted.length));
 }
 
 function layerFor(host) {
@@ -116,7 +127,10 @@ function displayBoxes(img, models) {
 async function measureModels(img) {
   const apiFaces = await detectFaces(img);
   const structured = await enqueue(() => detectByFeatures(img));
-  return nms([...apiFaces, ...structured], MAX_MODELS, 0.32).map((box) => expand(box, box.fromApi ? 0.1 : 0.06));
+  const found = nms([...apiFaces, ...structured], MAX_MODELS, 0.32).map((box) =>
+    expand(box, box.fromApi ? 0.1 : 0.06),
+  );
+  return found.length ? found : [assumedFace()];
 }
 
 async function detectFaces(img) {

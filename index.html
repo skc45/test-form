@@ -21,11 +21,15 @@
   <body>
     <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
       <defs>
-        <filter id="sd-bobble" x="-24%" y="-24%" width="148%" height="148%">
-          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.018 0.03" numOctaves="2" seed="3" result="noise">
-            <animate attributeName="baseFrequency" dur="3.6s" values="0.016 0.03;0.03 0.016;0.016 0.03" repeatCount="indefinite" />
+        <filter id="sd-bobble" x="-42%" y="-42%" width="184%" height="184%" color-interpolation-filters="sRGB">
+          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.011 0.02" numOctaves="3" seed="3" result="noise">
+            <animate attributeName="baseFrequency" dur="2.6s" values="0.01 0.02;0.026 0.01;0.01 0.02" repeatCount="indefinite" />
           </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G" />
+          <feMorphology in="SourceGraphic" operator="dilate" radius="3" result="fat" />
+          <feDisplacementMap in="fat" in2="noise" scale="20" xChannelSelector="R" yChannelSelector="G" result="wobble" />
+          <feComponentTransfer in="wobble">
+            <feFuncA type="discrete" tableValues="0 1" />
+          </feComponentTransfer>
         </filter>
       </defs>
     </svg>

@@ -110,6 +110,8 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("faceScore", bobble_js)
         self.assertIn("integralImage", bobble_js)
         self.assertIn("attachBobbles", bobble_js)
+        self.assertIn("DEFAULT_FACE", bobble_js)
+        self.assertIn("assumedFace", bobble_js)
 
     def test_recent_plates_in_opener(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -143,6 +145,9 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn('id="plugBtn"', html)
         self.assertIn("Plug servers", html)
         self.assertIn('id="sd-bobble"', html)
+        self.assertIn("feFuncA", html)
+        self.assertIn('scale="20"', html)
+        self.assertIn('operator="dilate"', html)
         self.assertIn('id="heroBobble"', html)
         self.assertIn('id="ethShard"', html)
         self.assertIn("Attach as NFT", html)
@@ -169,6 +174,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("bobble-layer", css)
         self.assertIn("bobble-model", css)
         self.assertIn("sd-bobble", css)
+        self.assertIn("inset 0 0 0 6px #0f3358", css)
         self.assertIn("card-photo", css)
         self.assertIn("--sky", css)
         self.assertIn("Search titles, places", html)
