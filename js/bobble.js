@@ -78,7 +78,10 @@ function mountModels(host, img, layer, models) {
     const cut = document.createElement("span");
     cut.className = "bobble-cut";
     cut.appendChild(cutImage(img, box));
+    const rim = document.createElement("span");
+    rim.className = "bobble-rim";
     model.appendChild(cut);
+    model.appendChild(rim);
     layer.appendChild(model);
   });
   host.classList.toggle("has-bobble", Boolean(fitted.length));

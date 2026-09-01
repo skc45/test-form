@@ -113,6 +113,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("DEFAULT_FACE", bobble_js)
         self.assertIn("assumedFace", bobble_js)
         self.assertIn("bobble-face", bobble_js)
+        self.assertIn("bobble-rim", bobble_js)
         self.assertIn("waitForBox", bobble_js)
         self.assertIn("viewerFrame", app_js)
 
@@ -178,8 +179,9 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("plug-search", css)
         self.assertIn("bobble-layer", css)
         self.assertIn("bobble-model", css)
+        self.assertIn("bobble-rim", css)
         self.assertIn("sd-bobble", css)
-        self.assertIn("inset 0 0 0 10px #ffffff", css)
+        self.assertIn("inset 0 0 0 14px #ffffff", css)
         self.assertIn("card-photo", css)
         self.assertIn("--sky", css)
         self.assertIn("Search titles, places", html)

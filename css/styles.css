@@ -2029,7 +2029,6 @@ kbd {
   top: var(--by);
   width: var(--bw);
   height: var(--bh);
-  filter: url("#sd-bobble");
 }
 
 .bobble-cut {
@@ -2040,14 +2039,9 @@ kbd {
   height: 118%;
   margin-top: -6%;
   border-radius: 48% 48% 42% 42%;
-  border: 6px solid #f4fbff;
   transform-origin: 50% 92%;
   opacity: 1;
-  box-shadow:
-    0 0 0 6px #0b2744,
-    0 0 0 12px #1a4e82,
-    inset 0 0 0 7px #0c2f54,
-    0 18px 26px rgba(8, 28, 56, 0.72);
+  filter: url("#sd-bobble");
   animation: sd-bobble var(--bobble-dur, 2.4s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
 }
@@ -2073,17 +2067,28 @@ kbd {
 }
 
 .bobble-cut::after {
-  content: "";
+  display: none;
+}
+
+.bobble-rim {
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  left: 0;
+  top: -6%;
+  width: 100%;
+  height: 118%;
+  border-radius: 48% 48% 42% 42%;
   pointer-events: none;
   opacity: 1;
-  mix-blend-mode: normal;
-  background: none;
+  border: 8px solid #f4fbff;
   box-shadow:
-    inset 0 0 0 10px #ffffff,
-    inset 0 0 0 16px #143a62;
+    0 0 0 7px #0b2744,
+    0 0 0 14px #1a4e82,
+    inset 0 0 0 8px #0c2f54,
+    inset 0 0 0 14px #ffffff,
+    0 18px 26px rgba(8, 28, 56, 0.72);
+  transform-origin: 50% 92%;
+  animation: sd-bobble var(--bobble-dur, 2.4s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
 }
 
 @keyframes sd-bobble {
