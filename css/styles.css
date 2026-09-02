@@ -2045,10 +2045,12 @@ body.bobble-off .bobble-layer {
 
 .bobble-model {
   position: absolute;
-  left: calc(var(--bx) - 4%);
-  top: calc(var(--by) - 26%);
-  width: calc(var(--bw) + 8%);
-  height: calc(var(--bh) + 44%);
+  left: calc(var(--bx) - 6%);
+  top: calc(var(--by) - 22%);
+  width: calc(var(--bw) + 18%);
+  min-width: 8.4rem;
+  height: calc(var(--bh) + 52%);
+  min-height: 10.5rem;
 }
 
 .bobble-browser {
@@ -2220,6 +2222,8 @@ body.bobble-off .bobble-layer {
   gap: 0.18rem;
   padding: 0.16rem 0.28rem 0.22rem;
   pointer-events: auto;
+  flex-shrink: 0;
+  z-index: 3;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(206, 228, 250, 0.92));
   border-top: 1px solid rgba(255, 255, 255, 0.7);
 }
@@ -2250,8 +2254,8 @@ body.bobble-off .bobble-layer {
 
 .bobble-timer-btn {
   appearance: none;
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 1 1 1.35rem;
+  min-width: 1.35rem;
   padding: 0.1rem 0.12rem;
   border: 1px solid rgba(255, 255, 255, 0.95);
   border-radius: 999px;
@@ -2307,7 +2311,7 @@ body.bobble-off .bobble-layer {
 
 .bobble-viewport {
   position: relative;
-  min-height: 0;
+  min-height: 2.4rem;
   overflow: hidden;
   background: #0b2a4d;
 }
