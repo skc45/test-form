@@ -5,6 +5,11 @@ let faceDetector = null;
 const queue = [];
 let busy = false;
 let enabled = true;
+let slideVx = 0;
+let slideVy = 0;
+let slideRaf = 0;
+let lastPointer = null;
+const scrollState = new WeakMap();
 
 const SCAN_SIZE = 192;
 const FACE_SCORE_MIN = 26;
@@ -63,6 +68,89 @@ export function toggleBobble() {
   return setBobbleEnabled(!enabled);
 }
 
+export function startSlideDriver() {
+  if (startSlideDriver.bound) {
+    if (enabled && !slideRaf) slideRaf = requestAnimationFrame(tickSlide);
+    return;
+  }
+  startSlideDriver.bound = true;
+  const opts = { passive: true };
+  const stage = document.getElementById("stage");
+  const film = document.getElementById("filmstrip");
+  stage?.addEventListener("scroll", onSlideScroll, opts);
+  film?.addEventListener("scroll", onSlideScroll, opts);
+  window.addEventListener("wheel", onSlideWheel, opts);
+  window.addEventListener("pointerdown", onSlidePointerDown, opts);
+  window.addEventListener("pointermove", onSlidePointerMove, opts);
+  window.addEventListener("pointerup", onSlidePointerUp, opts);
+  window.addEventListener("pointercancel", onSlidePointerUp, opts);
+  if (enabled) slideRaf = requestAnimationFrame(tickSlide);
+}
+
+function onSlideScroll(event) {
+  const el = event.currentTarget;
+  if (!el) return;
+  const now = performance.now();
+  const prev = scrollState.get(el) || { x: el.scrollLeft, y: el.scrollTop, t: now };
+  const dt = Math.max(8, now - prev.t);
+  addSlideVelocity(((el.scrollLeft - prev.x) / dt) * 16, ((el.scrollTop - prev.y) / dt) * 16);
+  scrollState.set(el, { x: el.scrollLeft, y: el.scrollTop, t: now });
+}
+
+function onSlideWheel(event) {
+  addSlideVelocity(event.deltaX * 0.18, event.deltaY * 0.18);
+}
+
+function onSlidePointerDown(event) {
+  lastPointer = { x: event.clientX, y: event.clientY, t: performance.now() };
+}
+
+function onSlidePointerMove(event) {
+  const now = performance.now();
+  const prev = lastPointer;
+  lastPointer = { x: event.clientX, y: event.clientY, t: now };
+  if (!prev) return;
+  if (!(event.buttons || event.pointerType === "touch")) return;
+  const dt = Math.max(8, now - prev.t);
+  addSlideVelocity(((event.clientX - prev.x) / dt) * 16, ((event.clientY - prev.y) / dt) * 16);
+}
+
+function onSlidePointerUp() {
+  lastPointer = null;
+}
+
+function addSlideVelocity(dx, dy) {
+  slideVx = clamp(slideVx + dx, -90, 90);
+  slideVy = clamp(slideVy + dy, -90, 90);
+  if (enabled && !slideRaf) slideRaf = requestAnimationFrame(tickSlide);
+}
+
+function tickSlide() {
+  slideRaf = 0;
+  slideVx *= 0.86;
+  slideVy *= 0.86;
+  if (Math.abs(slideVx) < 0.04) slideVx = 0;
+  if (Math.abs(slideVy) < 0.04) slideVy = 0;
+  applySlideMotion();
+  if (enabled && (slideVx || slideVy)) slideRaf = requestAnimationFrame(tickSlide);
+}
+
+function applySlideMotion() {
+  const speed = Math.min(1, Math.hypot(slideVx, slideVy) / 42);
+  const tx = clamp(slideVx * 0.42, -30, 30);
+  const ty = clamp(slideVy * 0.42, -34, 34);
+  const rot = clamp(-slideVx * 0.14 + slideVy * 0.04, -9, 9);
+  const sc = 1.04 + speed * 0.14;
+  const warp = 10 + speed * 44;
+  const root = document.documentElement;
+  root.style.setProperty("--bobble-tx", `${tx.toFixed(2)}px`);
+  root.style.setProperty("--bobble-ty", `${ty.toFixed(2)}px`);
+  root.style.setProperty("--bobble-rot", `${rot.toFixed(2)}deg`);
+  root.style.setProperty("--bobble-sc", sc.toFixed(3));
+  const displace = document.getElementById("sdBobbleDisplace");
+  if (displace) displace.setAttribute("scale", warp.toFixed(1));
+}
+
 export async function detectModels(img) {
   const src = img?.currentSrc || img?.src || "";
   if (!src || !img?.naturalWidth) return [assumedFace()];
@@ -87,6 +175,7 @@ export function attachBobbles(host, img) {
   if (!host || !img) return;
   hosts.add(host);
   host._bobbleImg = img;
+  startSlideDriver();
   if (!canPaintBobbles()) {
     clearHost(host);
     return;
@@ -124,6 +213,16 @@ function applyEnabled() {
     if (!enabled || !img) clearHost(host);
     else attachBobbles(host, img);
   }
+  if (enabled) startSlideDriver();
+  else {
+    slideVx = 0;
+    slideVy = 0;
+    if (slideRaf) {
+      cancelAnimationFrame(slideRaf);
+      slideRaf = 0;
+    }
+    applySlideMotion();
+  }
 }
 
 function clearHost(host) {
@@ -151,15 +250,13 @@ async function paintBobbles(host, img) {
 function mountModels(host, img, layer, models) {
   layer.replaceChildren();
   const fitted = displayBoxes(img, models);
-  fitted.forEach((box, index) => {
+  fitted.forEach((box) => {
     const model = document.createElement("span");
     model.className = "bobble-model";
     model.style.setProperty("--bx", `${box.left}%`);
     model.style.setProperty("--by", `${box.top}%`);
     model.style.setProperty("--bw", `${box.width}%`);
     model.style.setProperty("--bh", `${box.height}%`);
-    model.style.setProperty("--delay", `${(index * 0.37).toFixed(2)}s`);
-    model.style.setProperty("--bobble-dur", `${(2.15 + (index % 4) * 0.28).toFixed(2)}s`);
     const cut = document.createElement("span");
     cut.className = "bobble-cut";
     cut.appendChild(cutImage(img, box));

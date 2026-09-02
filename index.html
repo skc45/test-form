@@ -22,11 +22,9 @@
     <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
       <defs>
         <filter id="sd-bobble" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
-          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.0048 0.0062" numOctaves="1" seed="2" result="noise">
-            <animate attributeName="baseFrequency" dur="3.4s" values="0.0042 0.0064;0.007 0.0046;0.0042 0.0064" repeatCount="indefinite" />
-          </feTurbulence>
+          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.0048 0.0062" numOctaves="1" seed="2" result="noise" />
           <feGaussianBlur in="noise" stdDeviation="10" result="stretch" />
-          <feDisplacementMap in="SourceGraphic" in2="stretch" scale="38" xChannelSelector="R" yChannelSelector="G" result="warp" />
+          <feDisplacementMap id="sdBobbleDisplace" in="SourceGraphic" in2="stretch" scale="12" xChannelSelector="R" yChannelSelector="G" result="warp" />
           <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="edge" />
           <feComponentTransfer in="edge" result="soft">
             <feFuncA type="linear" slope="1.35" intercept="-0.08" />

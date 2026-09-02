@@ -2067,8 +2067,9 @@ body.bobble-off .bobble-layer {
   -webkit-mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 48%, rgba(0, 0, 0, 0.82) 70%, rgba(0, 0, 0, 0.35) 86%, transparent 100%);
   mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 48%, rgba(0, 0, 0, 0.82) 70%, rgba(0, 0, 0, 0.35) 86%, transparent 100%);
   filter: url("#sd-bobble");
-  animation: sd-bobble var(--bobble-dur, 2.6s) ease-in-out infinite;
-  animation-delay: var(--delay, 0s);
+  transform: translate3d(var(--bobble-tx, 0px), var(--bobble-ty, 0px), 0)
+    rotate(var(--bobble-rot, 0deg))
+    scale(var(--bobble-sc, 1.05));
 }
 
 .bobble-face {
@@ -2111,24 +2112,9 @@ body.bobble-off .bobble-layer {
   -webkit-mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 42%, transparent 100%);
   mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 42%, transparent 100%);
   transform-origin: 50% 88%;
-  animation: sd-bobble var(--bobble-dur, 2.6s) ease-in-out infinite;
-  animation-delay: var(--delay, 0s);
-}
-
-@keyframes sd-bobble {
-  0%,
-  100% {
-    transform: translate3d(0, 4%, 0) rotate(-1deg) scale(1.06);
-  }
-  22% {
-    transform: translate3d(1%, -10%, 0) rotate(1.4deg) scale(1.14);
-  }
-  48% {
-    transform: translate3d(-0.6%, 1%, 0) rotate(-0.6deg) scale(1.08);
-  }
-  74% {
-    transform: translate3d(0.8%, -7%, 0) rotate(1deg) scale(1.12);
-  }
+  transform: translate3d(var(--bobble-tx, 0px), var(--bobble-ty, 0px), 0)
+    rotate(var(--bobble-rot, 0deg))
+    scale(var(--bobble-sc, 1.05));
 }
 
 @keyframes sd-grain {

@@ -123,6 +123,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="plugBtn"', body)
         self.assertIn(b"Plug servers", body)
         self.assertIn(b'id="sd-bobble"', body)
+        self.assertIn(b'id="sdBobbleDisplace"', body)
         self.assertIn(b"feFuncA", body)
         self.assertIn(b'id="bobbleBtn"', body)
         self.assertIn(b"Bobble on / off", body)
