@@ -16,6 +16,14 @@ const FACE_SCORE_MIN = 26;
 const MAX_MODELS = 1;
 const DEFAULT_FACE = { x: 0.18, y: 0.06, w: 0.64, h: 0.72, score: 1, assumed: true };
 const BOBBLE_KEY = "aperture-bobble";
+const kitchenTimers = new Map();
+let kitchenClock = 0;
+const QUICK_TIMES = [
+  { label: "1m", ms: 60_000 },
+  { label: "3m", ms: 180_000 },
+  { label: "5m", ms: 300_000 },
+  { label: "10m", ms: 600_000 },
+];
 
 function assumedFace() {
   return { ...DEFAULT_FACE };
@@ -269,6 +277,7 @@ function mountModels(host, img, layer, models) {
     view.appendChild(cut);
     view.appendChild(rim);
     model.appendChild(view);
+    model.appendChild(kitchenTimer(img));
     layer.appendChild(model);
   });
   host.classList.toggle("has-bobble", Boolean(fitted.length));
@@ -337,6 +346,188 @@ function browserChrome(address) {
   return chrome;
 }
 
+function timerKey(img) {
+  return img?.currentSrc || img?.src || highlightAddress(img);
+}
+
+function kitchenState(key) {
+  if (!kitchenTimers.has(key)) {
+    kitchenTimers.set(key, { remainMs: 0, totalMs: 0, running: false, endsAt: 0, rang: false });
+  }
+  return kitchenTimers.get(key);
+}
+
+function kitchenTimer(img) {
+  const key = timerKey(img);
+  const bar = document.createElement("span");
+  bar.className = "bobble-timer";
+  bar.dataset.timer = key;
+  const face = document.createElement("span");
+  face.className = "bobble-timer-face";
+  face.setAttribute("role", "timer");
+  face.title = "Pause or resume";
+  const quicks = document.createElement("span");
+  quicks.className = "bobble-timer-quicks";
+  QUICK_TIMES.forEach((preset) => {
+    const btn = document.createElement("span");
+    btn.className = "bobble-timer-btn";
+    btn.setAttribute("role", "button");
+    btn.dataset.ms = String(preset.ms);
+    btn.textContent = preset.label;
+    btn.title = `${preset.label} kitchen timer`;
+    bindTimerControl(btn, (event) => {
+      startKitchenTimer(key, Number(event.currentTarget.dataset.ms));
+    });
+    quicks.appendChild(btn);
+  });
+  const reset = document.createElement("span");
+  reset.className = "bobble-timer-btn bobble-timer-reset";
+  reset.setAttribute("role", "button");
+  reset.title = "Reset timer";
+  reset.textContent = "×";
+  bindTimerControl(face, () => toggleKitchenTimer(key));
+  bindTimerControl(reset, () => resetKitchenTimer(key));
+  bar.appendChild(face);
+  bar.appendChild(quicks);
+  bar.appendChild(reset);
+  syncKitchenUi(bar);
+  return bar;
+}
+
+function bindTimerControl(el, onActivate) {
+  const stop = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  el.addEventListener("pointerdown", (event) => {
+    stop(event);
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    onActivate(event);
+  });
+  el.addEventListener("click", stop);
+  el.addEventListener("pointerup", stop);
+}
+
+function startKitchenTimer(key, ms) {
+  const t = kitchenState(key);
+  t.totalMs = ms;
+  t.remainMs = ms;
+  t.running = true;
+  t.endsAt = Date.now() + ms;
+  t.rang = false;
+  ensureKitchenClock();
+  syncKitchenKey(key);
+}
+
+function toggleKitchenTimer(key) {
+  const t = kitchenState(key);
+  if (t.rang && t.remainMs <= 0) {
+    resetKitchenTimer(key);
+    return;
+  }
+  if (!t.remainMs && !t.running) return;
+  if (t.running) {
+    t.remainMs = Math.max(0, t.endsAt - Date.now());
+    t.running = false;
+  } else if (t.remainMs > 0) {
+    t.running = true;
+    t.endsAt = Date.now() + t.remainMs;
+    t.rang = false;
+    ensureKitchenClock();
+  }
+  syncKitchenKey(key);
+}
+
+function resetKitchenTimer(key) {
+  kitchenTimers.set(key, { remainMs: 0, totalMs: 0, running: false, endsAt: 0, rang: false });
+  syncKitchenKey(key);
+}
+
+function ensureKitchenClock() {
+  if (kitchenClock) return;
+  kitchenClock = window.setInterval(tickKitchen, 250);
+}
+
+function tickKitchen() {
+  const now = Date.now();
+  let active = false;
+  for (const t of kitchenTimers.values()) {
+    if (!t.running) continue;
+    t.remainMs = Math.max(0, t.endsAt - now);
+    if (t.remainMs <= 0) {
+      t.running = false;
+      t.remainMs = 0;
+      if (!t.rang) {
+        t.rang = true;
+        ringKitchen();
+      }
+    } else active = true;
+  }
+  syncAllKitchenUi();
+  if (!active) {
+    window.clearInterval(kitchenClock);
+    kitchenClock = 0;
+  }
+}
+
+function remainingMs(t) {
+  if (t.running) return Math.max(0, t.endsAt - Date.now());
+  return t.remainMs;
+}
+
+function formatKitchen(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function syncKitchenKey(key) {
+  document.querySelectorAll(".bobble-timer").forEach((bar) => {
+    if (bar.dataset.timer === key) syncKitchenUi(bar);
+  });
+}
+
+function syncAllKitchenUi() {
+  document.querySelectorAll(".bobble-timer").forEach(syncKitchenUi);
+}
+
+function syncKitchenUi(bar) {
+  const t = kitchenState(bar.dataset.timer);
+  const left = remainingMs(t);
+  const face = bar.querySelector(".bobble-timer-face");
+  if (face) face.textContent = formatKitchen(left);
+  bar.classList.toggle("is-running", t.running);
+  bar.classList.toggle("is-ringing", Boolean(t.rang && left <= 0));
+  bar.closest(".bobble-browser")?.classList.toggle("is-ringing", Boolean(t.rang && left <= 0));
+  bar.querySelectorAll(".bobble-timer-btn[data-ms]").forEach((btn) => {
+    btn.classList.toggle("is-active", t.totalMs === Number(btn.dataset.ms) && (t.running || left > 0 || t.rang));
+  });
+}
+
+function ringKitchen() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    [0, 0.18, 0.36, 0.62].forEach((at, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i === 3 ? 1320 : 880;
+      gain.gain.setValueAtTime(0.0001, now + at);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + at);
+      osc.stop(now + at + 0.16);
+    });
+    window.setTimeout(() => ctx.close(), 1200);
+  } catch {
+    /* no audio */
+  }
+}
+
 function highlightAddress(img) {
   const raw = img?.currentSrc || img?.src || "";
   try {
@@ -355,9 +546,9 @@ function layerFor(host) {
   if (!layer) {
     layer = document.createElement("span");
     layer.className = "bobble-layer";
-    layer.setAttribute("aria-hidden", "true");
     host.appendChild(layer);
   }
+  layer.removeAttribute("aria-hidden");
   return layer;
 }
 

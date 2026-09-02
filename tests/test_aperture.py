@@ -127,6 +127,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"feFuncA", body)
         self.assertIn(b'id="bobbleBtn"', body)
         self.assertIn(b"Highlight browser on / off", body)
+        self.assertIn(b"kitchen timer with 1, 3, 5, and 10 minute buttons", body)
         self.assertNotIn(b'id="xrpLedger"', body)
         self.assertNotIn(b"Encode onto XRP", body)
 
