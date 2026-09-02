@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+    <meta name="theme-color" content="#3d8fd4" />
+    <title>Aperture — Full-screen catalog</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <meta
+      name="description"
+      content="A cinematic full-screen image catalog and viewer with keyboard navigation, slideshow, and local uploads."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,320;9..144,500;9..144,600&family=Outfit:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div class="aero-sky" aria-hidden="true"></div>
+    <div class="app" id="app">
+      <header class="topbar" id="topbar">
+        <div class="topbar-main">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <p class="brand-kicker">Vol. I · Photographica</p>
+              <h1>Aperture</h1>
+            </div>
+          </div>
+
+          <nav class="filters" id="filters" aria-label="Catalog filters"></nav>
+
+          <div class="top-actions">
+            <label class="search">
+              <span class="sr-only">Search catalog</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.2-3.2" />
+              </svg>
+              <input id="search" type="search" placeholder="Search titles, places…" autocomplete="off" />
+            </label>
+            <button class="text-btn folder-btn" id="folderBtn" type="button">Open folder</button>
+            <button class="icon-btn" id="themeBtn" type="button" aria-label="Open skin editor" title="Skin editor">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable 25× slideshow" title="25× slideshow on">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="6" width="18" height="12" rx="2" />
+                <path d="M10 9l5 3-5 3z" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="plugBtn" type="button" aria-label="Open interface" title="Plug servers">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3v6M16 3v6M6 9h12v4.2A6 6 0 0112 21a6 6 0 01-6-7.8V9z" />
+                <path d="M12 21v3" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="ethBtn" type="button" aria-label="Attach as Ethereum NFT" title="Attach as NFT">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.4l7.2 9.4L12 21.6 4.8 11.8 12 2.4z" />
+                <path d="M12 2.4v19.2" />
+                <path d="M4.8 11.8H19.2" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="layoutBtn" type="button" aria-label="Toggle layout" title="Toggle layout">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="8" height="8" rx="1.5" />
+                <rect x="13" y="3" width="8" height="8" rx="1.5" />
+                <rect x="3" y="13" width="8" height="8" rx="1.5" />
+                <rect x="13" y="13" width="8" height="8" rx="1.5" />
+              </svg>
+            </button>
+            <label class="icon-btn upload-btn" title="Add images">
+              <input id="fileInput" type="file" accept="image/*" multiple hidden />
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span class="sr-only">Add images</span>
+            </label>
+            <input id="folderInput" type="file" accept="image/*" webkitdirectory directory multiple hidden />
+          </div>
+        </div>
+        <nav class="recent-tabs" id="recentTabs" hidden aria-label="Recent folders"></nav>
+      </header>
+
+      <main class="stage" id="stage">
+        <section class="hero" id="hero" aria-label="Featured plate">
+          <button class="hero-frame" id="heroBtn" type="button">
+            <img id="heroImg" alt="" />
+            <span class="slide-layer bobble-layer" id="heroBobble" aria-hidden="true"></span>
+            <div class="hero-veil"></div>
+            <div class="hero-copy">
+              <p class="hero-index" id="heroIndex">Plate 01</p>
+              <h2 id="heroTitle"></h2>
+              <p id="heroMeta"></p>
+            </div>
+          </button>
+        </section>
+
+        <section class="catalog-wrap">
+          <div class="catalog-head">
+            <p id="resultCount">Loading catalog…</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> 25× slideshow</p>
+          </div>
+          <div class="catalog masonry" id="catalog" role="list"></div>
+          <button class="canvas-bar" id="canvasBar" type="button">
+            <span class="canvas-copy" id="canvasCopy">Canvasboard</span>
+          </button>
+          <p class="empty" id="empty" hidden>No plates match that search.</p>
+        </section>
+      </main>
+    </div>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="viewer-stage" id="viewerStage">
+        <div class="viewer-frame" id="viewerFrame">
+          <img class="viewer-image" id="viewerImage" alt="" draggable="false" />
+          <span class="slide-layer bobble-layer" id="viewerBobble" aria-hidden="true"></span>
+        </div>
+        <div class="viewer-loader" id="viewerLoader" aria-hidden="true"></div>
+      </div>
+
+      <button class="nav-hit left" id="prevBtn" type="button" aria-label="Previous image">
+        <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+      </button>
+      <button class="nav-hit right" id="nextBtn" type="button" aria-label="Next image">
+        <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+      </button>
+
+      <div class="viewer-chrome top" id="viewerTop">
+        <button class="text-btn" id="closeBtn" type="button">Close</button>
+        <div class="viewer-identity">
+          <p class="viewer-kicker" id="viewerKicker"></p>
+          <h2 id="viewerTitle"></h2>
+          <p id="viewerMeta"></p>
+        </div>
+        <div class="viewer-tools">
+          <span class="counter" id="counter"></span>
+          <button class="icon-btn" id="fitBtn" type="button" aria-label="Toggle fill" title="Fit / fill">
+            <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+          </button>
+          <button class="icon-btn" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
+          <button class="icon-btn" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+          <button class="icon-btn" id="slideBtn" type="button" aria-label="Slideshow" title="Slideshow">
+            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+          </button>
+          <button class="icon-btn" id="downloadBtn" type="button" aria-label="Download plate" title="Download">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v12M7 11l5 5 5-5M5 20h14" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="fullBtn" type="button" aria-label="Browser fullscreen" title="Fullscreen">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="filmstrip" id="filmstrip" role="listbox" aria-label="Catalog filmstrip"></div>
+      <button class="download-bar" id="downloadBar" type="button" aria-label="Download this plate">
+        <span class="download-copy" id="downloadCopy">Tap to download</span>
+        <span class="download-track" aria-hidden="true"><span class="download-fill" id="downloadFill"></span></span>
+      </button>
+    </div>
+
+    <div class="help" id="help" hidden>
+      <div class="help-card">
+        <p class="help-kicker">Keyboard</p>
+        <h2>Shortcuts</h2>
+        <dl>
+          <div><dt>← →</dt><dd>Previous / next</dd></div>
+          <div><dt>Space</dt><dd>Slideshow</dd></div>
+          <div><dt>F</dt><dd>Browser fullscreen</dd></div>
+          <div><dt>Z / 0</dt><dd>Zoom in / reset</dd></div>
+          <div><dt>C</dt><dd>Fit or fill</dd></div>
+          <div><dt>Esc</dt><dd>Close viewer</dd></div>
+          <div><dt>D</dt><dd>Download plate to Downloads</dd></div>
+          <div><dt>Long-press</dt><dd>Crop, then post on Canvasboard</dd></div>
+          <div><dt>I</dt><dd>Interface</dd></div>
+          <div><dt>B</dt><dd>Canvasboard</dd></div>
+          <div><dt>X</dt><dd>Attach as NFT</dd></div>
+          <div><dt>T</dt><dd>Skin editor</dd></div>
+          <div><dt>P</dt><dd>25× slideshow on / off</dd></div>
+          <div><dt>O</dt><dd>Open folder</dd></div>
+          <div><dt>?</dt><dd>This overlay</dd></div>
+        </dl>
+        <p class="help-foot">Open a folder to browse plates. Each plate runs a 25× catalog slideshow in place of the old overlay windows. Saving a plate asks for permission to use your Downloads folder. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board. Plug image servers into search engines from the Interface menu.</p>
+        <button class="text-btn" id="helpClose" type="button">Got it</button>
+      </div>
+    </div>
+
+    <div class="opener" id="opener" hidden>
+      <div class="opener-card">
+        <p class="help-kicker">Aperture</p>
+        <h2>Open a folder</h2>
+        <p class="opener-copy">
+          Choose a folder of photographs, use Downloads, or browse the demo catalog.
+        </p>
+        <div class="cache-card" id="cacheCard" hidden>
+          <p class="help-kicker">Recent plates</p>
+          <div class="recent-row" id="recentRow"></div>
+          <div class="opener-actions">
+            <button class="text-btn" id="forgetBtn" type="button">Forget recents</button>
+          </div>
+        </div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="openerFolderBtn" type="button">Choose folder</button>
+          <button class="text-btn" id="openerDownloadsBtn" type="button">Use Downloads</button>
+          <button class="text-btn" id="demoBtn" type="button">View demo catalog</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="downloads-permit" id="downloadsPermit" hidden>
+      <div class="downloads-card">
+        <p class="help-kicker">Permission</p>
+        <h2>Use Downloads</h2>
+        <p class="downloads-copy">Aperture needs permission to use your Downloads folder to save plates and open photographs stored there.</p>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="downloadsAllow" type="button">Allow</button>
+          <button class="text-btn" id="downloadsDeny" type="button">Not now</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="crop-form" id="cropForm" hidden>
+      <div class="crop-card">
+        <p class="help-kicker">Send</p>
+        <h2>Crop</h2>
+        <div class="crop-stage" id="cropStage">
+          <div class="crop-frame" id="cropFrame">
+            <img id="cropImage" alt="" draggable="false" />
+            <div class="crop-box" id="cropBox">
+              <span class="crop-handle" data-handle="nw"></span>
+              <span class="crop-handle" data-handle="ne"></span>
+              <span class="crop-handle" data-handle="sw"></span>
+              <span class="crop-handle" data-handle="se"></span>
+            </div>
+          </div>
+        </div>
+        <p class="crop-status" id="cropStatus">Drag the frame to crop</p>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="cropApply" type="button">Crop</button>
+          <button class="text-btn" id="cropCancel" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="post-form" id="postForm" hidden>
+      <form class="post-card" id="postCard">
+        <p class="help-kicker">Send</p>
+        <h2>Post on Canvasboard</h2>
+        <img id="postPreview" alt="" />
+        <label class="post-field">
+          <span class="sr-only">Caption</span>
+          <textarea id="postCaption" name="caption" rows="3" maxlength="500" placeholder="Write a caption…"></textarea>
+        </label>
+        <p class="post-status" id="postStatus" hidden></p>
+        <div class="download-track post-track" id="postTrack" hidden>
+          <span class="download-fill" id="postFill"></span>
+        </div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="postSend" type="submit">Post on Canvasboard</button>
+          <button class="text-btn" id="postShare" type="button">Share</button>
+          <button class="text-btn" id="postCancel" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="canvas-board" id="canvasBoard" hidden>
+      <div class="canvas-card">
+        <p class="help-kicker">Canvasboard</p>
+        <h2>Posted plates</h2>
+        <p class="canvas-status" id="canvasStatus">Crop a plate, then post it on the board.</p>
+        <div class="download-track post-track" id="canvasTrack" hidden>
+          <span class="download-fill" id="canvasFill"></span>
+        </div>
+        <div class="canvas-wall" id="canvasWall"></div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="canvasNftAll" type="button">Attach as NFT</button>
+          <button class="text-btn" id="canvasClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="plug-menu" id="plugMenu" hidden>
+      <div class="plug-card">
+        <p class="help-kicker">Interface</p>
+        <h2>Plug servers</h2>
+        <p class="plug-status" id="plugStatus">Plug an image server into a search engine, then search those plugs.</p>
+        <label class="plug-search">
+          <span class="sr-only">Search plugged engines</span>
+          <input id="plugQuery" type="search" placeholder="Search plugged engines…" autocomplete="off" />
+        </label>
+        <div class="plug-bay" id="plugBay"></div>
+        <ol class="plug-hits" id="plugHits"></ol>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="plugReset" type="button">Reset plugs</button>
+          <button class="text-btn" id="plugClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="skin-editor" id="skinEditor" hidden>
+      <div class="skin-card">
+        <p class="help-kicker">Skin</p>
+        <h2>Theme editor</h2>
+        <p class="skin-status" id="skinStatus">Aero sky</p>
+        <div class="skin-swatches" id="skinSwatches"></div>
+        <div class="skin-fields" id="skinFields">
+          <label class="skin-field"><span>Sky top</span><input id="skinSkyTop" type="color" data-skin="skyTop" /></label>
+          <label class="skin-field"><span>Sky</span><input id="skinSkyMid" type="color" data-skin="skyMid" /></label>
+          <label class="skin-field"><span>Night</span><input id="skinSkyDeep" type="color" data-skin="skyDeep" /></label>
+          <label class="skin-field"><span>Glow</span><input id="skinGlow" type="color" data-skin="glow" /></label>
+          <label class="skin-field"><span>Haze</span><input id="skinHaze" type="color" data-skin="haze" /></label>
+          <label class="skin-field"><span>Ink</span><input id="skinInk" type="color" data-skin="ink" /></label>
+          <label class="skin-field"><span>Accent</span><input id="skinAccent" type="color" data-skin="accent" /></label>
+          <label class="skin-field"><span>Glass</span><input id="skinGlass" type="color" data-skin="glass" /></label>
+          <label class="skin-field"><span>Sheen</span><input id="skinSheen" type="range" min="0" max="100" value="55" /></label>
+        </div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="skinReset" type="button">Reset Aero</button>
+          <button class="text-btn" id="skinClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+    <div class="eth-shard" id="ethShard" hidden>
+      <div class="eth-card">
+        <p class="help-kicker">Ethereum shard</p>
+        <h2>Attach as NFT</h2>
+        <p class="eth-status" id="ethStatus">Attach plates as NFTs on an Ethereum shard and open them from a 0x pointer.</p>
+        <p class="eth-address" id="ethCatalogAddress" hidden></p>
+        <ol class="eth-list" id="ethList"></ol>
+        <label class="eth-pointer-field">
+          <span class="sr-only">Shard pointer</span>
+          <input id="ethPointerInput" type="text" placeholder="Paste eths: NFT pointer or 0x address…" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="eth-pointer-readout" id="ethPointerReadout" hidden></p>
+        <div class="download-track post-track" id="ethTrack" hidden>
+          <span class="download-fill" id="ethFill"></span>
+        </div>
+        <div class="opener-actions">
+          <button class="text-btn opener-primary" id="ethEncodeCatalog" type="button">Attach catalog</button>
+          <button class="text-btn" id="ethEncodePlate" type="button">Attach this plate</button>
+          <button class="text-btn" id="ethOpen" type="button">Open NFT</button>
+          <button class="text-btn" id="ethDownload" type="button">Download NFTs</button>
+          <button class="text-btn" id="ethClose" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

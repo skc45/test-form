@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Aperture
+Comment=Full-screen image catalog
+Exec=python3 aperture.py %F
+Path=
+Icon=favicon.svg
+Terminal=false
+Categories=Graphics;Viewer;Photography;
+MimeType=inode/directory;
+StartupNotify=true
