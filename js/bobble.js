@@ -250,23 +250,104 @@ async function paintBobbles(host, img) {
 function mountModels(host, img, layer, models) {
   layer.replaceChildren();
   const fitted = displayBoxes(img, models);
+  const address = highlightAddress(img);
   fitted.forEach((box) => {
     const model = document.createElement("span");
-    model.className = "bobble-model";
+    model.className = "bobble-model bobble-browser";
     model.style.setProperty("--bx", `${box.left}%`);
     model.style.setProperty("--by", `${box.top}%`);
     model.style.setProperty("--bw", `${box.width}%`);
     model.style.setProperty("--bh", `${box.height}%`);
+    model.appendChild(browserChrome(address));
+    const view = document.createElement("span");
+    view.className = "bobble-viewport";
     const cut = document.createElement("span");
     cut.className = "bobble-cut";
     cut.appendChild(cutImage(img, box));
     const rim = document.createElement("span");
     rim.className = "bobble-rim";
-    model.appendChild(cut);
-    model.appendChild(rim);
+    view.appendChild(cut);
+    view.appendChild(rim);
+    model.appendChild(view);
     layer.appendChild(model);
   });
   host.classList.toggle("has-bobble", Boolean(fitted.length));
+}
+
+function browserChrome(address) {
+  const chrome = document.createElement("span");
+  chrome.className = "bobble-chrome";
+
+  const titlebar = document.createElement("span");
+  titlebar.className = "bobble-titlebar";
+  const traffic = document.createElement("span");
+  traffic.className = "bobble-traffic";
+  traffic.setAttribute("aria-hidden", "true");
+  ["close", "min", "max"].forEach((name) => {
+    const dot = document.createElement("span");
+    dot.className = `bobble-dot bobble-dot-${name}`;
+    traffic.appendChild(dot);
+  });
+  const tabs = document.createElement("span");
+  tabs.className = "bobble-tabs";
+  const tab = document.createElement("span");
+  tab.className = "bobble-tab";
+  const fav = document.createElement("span");
+  fav.className = "bobble-fav";
+  fav.setAttribute("aria-hidden", "true");
+  tab.appendChild(fav);
+  tab.appendChild(document.createTextNode("Highlight"));
+  tabs.appendChild(tab);
+  titlebar.appendChild(traffic);
+  titlebar.appendChild(tabs);
+
+  const toolbar = document.createElement("span");
+  toolbar.className = "bobble-toolbar";
+  const nav = document.createElement("span");
+  nav.className = "bobble-nav";
+  nav.setAttribute("aria-hidden", "true");
+  [
+    ["back", "M14 6l-6 6 6 6"],
+    ["fwd", "M10 6l6 6-6 6"],
+    ["reload", "M16.5 8.2A5 5 0 108 16.5M16.5 8.2V4.8M16.5 8.2H13"],
+  ].forEach(([name, d]) => {
+    const btn = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    btn.setAttribute("class", `bobble-nav-btn bobble-nav-${name}`);
+    btn.setAttribute("viewBox", "0 0 24 24");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    btn.appendChild(path);
+    nav.appendChild(btn);
+  });
+  const omnibox = document.createElement("span");
+  omnibox.className = "bobble-omnibox";
+  const lock = document.createElement("span");
+  lock.className = "bobble-lock";
+  lock.setAttribute("aria-hidden", "true");
+  const url = document.createElement("span");
+  url.className = "bobble-url";
+  url.textContent = address;
+  omnibox.appendChild(lock);
+  omnibox.appendChild(url);
+  toolbar.appendChild(nav);
+  toolbar.appendChild(omnibox);
+
+  chrome.appendChild(titlebar);
+  chrome.appendChild(toolbar);
+  return chrome;
+}
+
+function highlightAddress(img) {
+  const raw = img?.currentSrc || img?.src || "";
+  try {
+    const url = new URL(raw, location.href);
+    if (url.protocol === "blob:" || url.protocol === "data:") return "aperture://highlight/media";
+    const host = url.hostname || "local";
+    const path = (url.pathname || "/media").replace(/\/+$/, "") || "/media";
+    return `aperture://highlight/${host}${path}`.slice(0, 72);
+  } catch {
+    return "aperture://highlight/media";
+  }
 }
 
 function layerFor(host) {

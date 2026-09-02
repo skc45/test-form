@@ -63,10 +63,14 @@
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
               </svg>
             </button>
-            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable bobble" title="Bobble on">
+            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable highlight browser" title="Highlight browser on">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="4" y="7" width="16" height="12" rx="2" />
-                <ellipse cx="12" cy="10" rx="5" ry="6.4" />
+                <rect x="3.5" y="5" width="17" height="14" rx="2.2" />
+                <path d="M3.5 9h17" />
+                <circle cx="6.6" cy="7" r="0.7" />
+                <circle cx="8.8" cy="7" r="0.7" />
+                <circle cx="11" cy="7" r="0.7" />
+                <rect x="6" y="11.2" width="12" height="2.2" rx="1.1" />
               </svg>
             </button>
             <button class="icon-btn" id="plugBtn" type="button" aria-label="Open interface" title="Plug servers">
@@ -120,7 +124,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> bobble</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> browser</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <button class="canvas-bar" id="canvasBar" type="button">
@@ -201,7 +205,7 @@
           <div><dt>B</dt><dd>Canvasboard</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
-          <div><dt>P</dt><dd>Bobble on / off</dd></div>
+          <div><dt>P</dt><dd>Highlight browser on / off</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>

@@ -2045,13 +2045,179 @@ body.bobble-off .bobble-layer {
 
 .bobble-model {
   position: absolute;
-  left: var(--bx);
-  top: var(--by);
-  width: var(--bw);
-  height: var(--bh);
-  filter:
-    drop-shadow(0 22px 18px rgba(8, 28, 56, 0.48))
-    drop-shadow(0 6px 8px rgba(8, 28, 56, 0.28));
+  left: calc(var(--bx) - 4%);
+  top: calc(var(--by) - 26%);
+  width: calc(var(--bw) + 8%);
+  height: calc(var(--bh) + 28%);
+}
+
+.bobble-browser {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(244, 249, 255, 0.98), rgba(214, 230, 248, 0.94));
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 18px 28px rgba(8, 28, 56, 0.38);
+  transform-origin: 50% 88%;
+  transform: translate3d(var(--bobble-tx, 0px), var(--bobble-ty, 0px), 0)
+    rotate(var(--bobble-rot, 0deg))
+    scale(var(--bobble-sc, 1.03));
+}
+
+.bobble-chrome {
+  display: grid;
+  gap: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(206, 228, 250, 0.88));
+  border-bottom: 1px solid rgba(150, 184, 214, 0.35);
+}
+
+.bobble-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.38rem 0.08rem;
+}
+
+.bobble-traffic {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bobble-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+
+.bobble-dot-close {
+  background: #ff5f57;
+}
+
+.bobble-dot-min {
+  background: #febc2e;
+}
+
+.bobble-dot-max {
+  background: #28c840;
+}
+
+.bobble-tabs {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+}
+
+.bobble-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  max-width: 100%;
+  padding: 0.14rem 0.55rem 0.16rem 0.38rem;
+  border-radius: 8px 8px 0 0;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-bottom: 0;
+  color: #16385c;
+  font-size: 0.52rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bobble-fav {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #3d8fd4, #7ec8ff);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.7);
+}
+
+.bobble-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.12rem 0.38rem 0.28rem;
+}
+
+.bobble-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.bobble-nav-btn {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: #4a6f93;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.78;
+}
+
+.bobble-omnibox {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  color: #16385c;
+  font-size: 0.52rem;
+  letter-spacing: 0.01em;
+}
+
+.bobble-lock {
+  width: 7px;
+  height: 8px;
+  flex-shrink: 0;
+  border: 1.2px solid #4a6f93;
+  border-radius: 1.5px 1.5px 2px 2px;
+  position: relative;
+}
+
+.bobble-lock::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: -4px;
+  width: 3px;
+  height: 4px;
+  border: 1.2px solid #4a6f93;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+}
+
+.bobble-url {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card .bobble-nav {
+  display: none;
+}
+
+.bobble-viewport {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b2a4d;
 }
 
 .bobble-cut {
@@ -2059,17 +2225,12 @@ body.bobble-off .bobble-layer {
   display: block;
   overflow: hidden;
   width: 100%;
-  height: 118%;
-  margin-top: -6%;
-  border-radius: 50%;
-  transform-origin: 50% 88%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  transform-origin: 50% 46%;
   opacity: 1;
-  -webkit-mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 48%, rgba(0, 0, 0, 0.82) 70%, rgba(0, 0, 0, 0.35) 86%, transparent 100%);
-  mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 48%, rgba(0, 0, 0, 0.82) 70%, rgba(0, 0, 0, 0.35) 86%, transparent 100%);
   filter: url("#sd-bobble");
-  transform: translate3d(var(--bobble-tx, 0px), var(--bobble-ty, 0px), 0)
-    rotate(var(--bobble-rot, 0deg))
-    scale(var(--bobble-sc, 1.05));
 }
 
 .bobble-face {
@@ -2101,20 +2262,14 @@ body.bobble-off .bobble-layer {
 
 .bobble-rim {
   position: absolute;
-  left: 0;
-  top: -6%;
-  width: 100%;
-  height: 118%;
-  border-radius: 50%;
+  inset: 0;
+  border-radius: 0;
   pointer-events: none;
   opacity: 1;
-  box-shadow: 0 22px 30px rgba(8, 28, 56, 0.32);
-  -webkit-mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 42%, transparent 100%);
-  mask-image: radial-gradient(ellipse 52% 50% at 50% 46%, #000 42%, transparent 100%);
-  transform-origin: 50% 88%;
-  transform: translate3d(var(--bobble-tx, 0px), var(--bobble-ty, 0px), 0)
-    rotate(var(--bobble-rot, 0deg))
-    scale(var(--bobble-sc, 1.05));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  mask-image: none;
+  -webkit-mask-image: none;
+  transform: none;
 }
 
 @keyframes sd-grain {

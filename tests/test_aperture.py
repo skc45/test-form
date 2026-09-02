@@ -126,7 +126,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b'id="sdBobbleDisplace"', body)
         self.assertIn(b"feFuncA", body)
         self.assertIn(b'id="bobbleBtn"', body)
-        self.assertIn(b"Bobble on / off", body)
+        self.assertIn(b"Highlight browser on / off", body)
         self.assertNotIn(b'id="xrpLedger"', body)
         self.assertNotIn(b"Encode onto XRP", body)
 

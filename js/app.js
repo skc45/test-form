@@ -1722,8 +1722,8 @@ function toggleBobbleEffect() {
 function syncBobbleButton() {
   const on = bobble.isBobbleEnabled();
   els.bobbleBtn?.setAttribute("aria-pressed", on ? "true" : "false");
-  els.bobbleBtn?.setAttribute("aria-label", on ? "Disable bobble" : "Enable bobble");
-  if (els.bobbleBtn) els.bobbleBtn.title = on ? "Bobble on" : "Bobble off";
+  els.bobbleBtn?.setAttribute("aria-label", on ? "Disable highlight browser" : "Enable highlight browser");
+  if (els.bobbleBtn) els.bobbleBtn.title = on ? "Highlight browser on" : "Highlight browser off";
   els.bobbleBtn?.classList.toggle("is-off", !on);
 }
 
