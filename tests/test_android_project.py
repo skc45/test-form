@@ -116,6 +116,7 @@ class AndroidProjectTests(unittest.TestCase):
         self.assertIn("assumedFace", bobble_js)
         self.assertIn("bobble-face", bobble_js)
         self.assertIn("bobble-rim", bobble_js)
+        self.assertIn("const MAX_MODELS = 1", bobble_js)
         self.assertIn("bobble-browser", bobble_js)
         self.assertIn("bobble-omnibox", bobble_js)
         self.assertIn("browserChrome", bobble_js)

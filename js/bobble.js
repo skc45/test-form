@@ -13,7 +13,7 @@ const scrollState = new WeakMap();
 
 const SCAN_SIZE = 192;
 const FACE_SCORE_MIN = 26;
-const MAX_MODELS = 4;
+const MAX_MODELS = 1;
 const DEFAULT_FACE = { x: 0.18, y: 0.06, w: 0.64, h: 0.72, score: 1, assumed: true };
 const BOBBLE_KEY = "aperture-bobble";
 
