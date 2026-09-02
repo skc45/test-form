@@ -19,20 +19,6 @@
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
-    <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
-      <defs>
-        <filter id="sd-bobble" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
-          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.0048 0.0062" numOctaves="1" seed="2" result="noise" />
-          <feGaussianBlur in="noise" stdDeviation="10" result="stretch" />
-          <feDisplacementMap id="sdBobbleDisplace" in="SourceGraphic" in2="stretch" scale="12" xChannelSelector="R" yChannelSelector="G" result="warp" />
-          <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="edge" />
-          <feComponentTransfer in="edge" result="soft">
-            <feFuncA type="linear" slope="1.35" intercept="-0.08" />
-          </feComponentTransfer>
-          <feComposite in="warp" in2="soft" operator="in" />
-        </filter>
-      </defs>
-    </svg>
     <div class="aero-sky" aria-hidden="true"></div>
     <div class="app" id="app">
       <header class="topbar" id="topbar">
@@ -63,14 +49,10 @@
                 <path d="M12 3v2.2M12 18.8V21M4.9 6.1l1.6 1.6M17.5 16.3l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.9l1.6-1.6M17.5 7.7l1.6-1.6" />
               </svg>
             </button>
-            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable highlight browser" title="Highlight browser on">
+            <button class="icon-btn" id="bobbleBtn" type="button" aria-pressed="true" aria-label="Disable 25× slideshow" title="25× slideshow on">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3.5" y="5" width="17" height="14" rx="2.2" />
-                <path d="M3.5 9h17" />
-                <circle cx="6.6" cy="7" r="0.7" />
-                <circle cx="8.8" cy="7" r="0.7" />
-                <circle cx="11" cy="7" r="0.7" />
-                <rect x="6" y="11.2" width="12" height="2.2" rx="1.1" />
+                <rect x="3" y="6" width="18" height="12" rx="2" />
+                <path d="M10 9l5 3-5 3z" />
               </svg>
             </button>
             <button class="icon-btn" id="plugBtn" type="button" aria-label="Open interface" title="Plug servers">
@@ -111,7 +93,7 @@
         <section class="hero" id="hero" aria-label="Featured plate">
           <button class="hero-frame" id="heroBtn" type="button">
             <img id="heroImg" alt="" />
-            <span class="bobble-layer" id="heroBobble" aria-hidden="true"></span>
+            <span class="slide-layer bobble-layer" id="heroBobble" aria-hidden="true"></span>
             <div class="hero-veil"></div>
             <div class="hero-copy">
               <p class="hero-index" id="heroIndex">Plate 01</p>
@@ -124,7 +106,7 @@
         <section class="catalog-wrap">
           <div class="catalog-head">
             <p id="resultCount">Loading catalog…</p>
-            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> browser</p>
+            <p class="hint" id="catalogHint">Open a folder · <kbd>I</kbd> interface · <kbd>B</kbd> canvasboard · <kbd>X</kbd> NFT · <kbd>T</kbd> skin · <kbd>P</kbd> 25× slideshow</p>
           </div>
           <div class="catalog masonry" id="catalog" role="list"></div>
           <button class="canvas-bar" id="canvasBar" type="button">
@@ -139,7 +121,7 @@
       <div class="viewer-stage" id="viewerStage">
         <div class="viewer-frame" id="viewerFrame">
           <img class="viewer-image" id="viewerImage" alt="" draggable="false" />
-          <span class="bobble-layer" id="viewerBobble" aria-hidden="true"></span>
+          <span class="slide-layer bobble-layer" id="viewerBobble" aria-hidden="true"></span>
         </div>
         <div class="viewer-loader" id="viewerLoader" aria-hidden="true"></div>
       </div>
@@ -205,11 +187,11 @@
           <div><dt>B</dt><dd>Canvasboard</dd></div>
           <div><dt>X</dt><dd>Attach as NFT</dd></div>
           <div><dt>T</dt><dd>Skin editor</dd></div>
-          <div><dt>P</dt><dd>Highlight browser on / off</dd></div>
+          <div><dt>P</dt><dd>25× slideshow on / off</dd></div>
           <div><dt>O</dt><dd>Open folder</dd></div>
           <div><dt>?</dt><dd>This overlay</dd></div>
         </dl>
-        <p class="help-foot">Open a folder to browse plates. Each highlight browser has its own kitchen timer with 1, 3, 5, and 10 minute buttons. Saving a plate asks for permission to use your Downloads folder. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board. Plug image servers into search engines from the Interface menu.</p>
+        <p class="help-foot">Open a folder to browse plates. Each plate runs a 25× catalog slideshow in place of the old overlay windows. Saving a plate asks for permission to use your Downloads folder. Long-press a plate to crop it first, then post the crop on Canvasboard. Posted plates can be attached as NFTs from the board. Plug image servers into search engines from the Interface menu.</p>
         <button class="text-btn" id="helpClose" type="button">Got it</button>
       </div>
     </div>

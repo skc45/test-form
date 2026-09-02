@@ -184,6 +184,10 @@ function visiblePhotos() {
   });
 }
 
+function catalogSlideSrcs() {
+  return visiblePhotos().map((photo) => photo.thumb || photo.src || photo.hero || "").filter(Boolean);
+}
+
 function bindImage(img, photo, size = "thumb") {
   const src = size === "hero" ? photo.hero || photo.src : size === "full" ? photo.src : photo.thumb;
   img.src = src;
@@ -357,7 +361,7 @@ function startRecentSlideshow() {
       const next = ((current < 0 ? 0 : current) + 1) % slides.length;
       slides.forEach((img, i) => img.classList.toggle("is-active", i === next));
     });
-  }, 1800);
+  }, bobble.RECENT_SLIDE_MS);
 }
 
 function renderRecentRow() {
@@ -409,7 +413,8 @@ function renderHero() {
   }
   els.hero.hidden = false;
   bindImage(els.heroImg, featured, "hero");
-  bobble.attachBobbles(els.heroBtn, els.heroImg);
+  bobble.setSlides(catalogSlideSrcs());
+  bobble.attachSlideshow(els.heroBtn, els.heroImg);
   els.heroTitle.textContent = featured.title;
   els.heroMeta.textContent = photoMeta(featured);
   els.heroIndex.textContent = `Plate ${plateNumber(featured.index)}`;
@@ -438,7 +443,7 @@ function renderCatalog() {
         <span class="card-index">${plateNumber(photo.index)}</span>
         <span class="card-photo">
           <img alt="" />
-          <span class="bobble-layer" aria-hidden="true"></span>
+          <span class="slide-layer bobble-layer" aria-hidden="true"></span>
         </span>
         <span class="card-meta">
           <strong>${photo.title}</strong>
@@ -452,7 +457,8 @@ function renderCatalog() {
     const photo = photos[i];
     const image = card.querySelector("img");
     bindImage(image, photo);
-    bobble.attachBobbles(card.querySelector(".card-photo"), image);
+    bobble.setSlides(catalogSlideSrcs());
+    bobble.attachSlideshow(card.querySelector(".card-photo"), image);
     card.addEventListener("click", () => {
       if (longPressConsumed()) return;
       openViewer(photo.id);
@@ -510,7 +516,6 @@ function showIndex(index) {
   els.counter.textContent = `${state.activeIndex + 1} / ${photos.length}`;
   els.viewerImage.classList.remove("is-ready");
   bindImage(els.viewerImage, photo, "full");
-  bobble.attachBobbles(els.viewerFrame, els.viewerImage);
   els.viewerImage.addEventListener(
     "load",
     () => els.viewer.classList.remove("is-loading"),
@@ -531,6 +536,7 @@ function openViewer(id) {
   requestAnimationFrame(() => els.viewer.classList.add("is-open"));
   document.body.style.overflow = "hidden";
   showIndex(index >= 0 ? index : 0);
+  startSlideshow();
 }
 
 function closeViewer() {
@@ -551,7 +557,7 @@ function next(delta = 1) {
 function startSlideshow() {
   state.slideshow = true;
   document.getElementById("slideBtn").setAttribute("aria-pressed", "true");
-  slideTimer = window.setInterval(() => next(1), 3200);
+  slideTimer = window.setInterval(() => next(1), bobble.SLIDE_MS);
 }
 
 function stopSlideshow() {
@@ -1722,8 +1728,8 @@ function toggleBobbleEffect() {
 function syncBobbleButton() {
   const on = bobble.isBobbleEnabled();
   els.bobbleBtn?.setAttribute("aria-pressed", on ? "true" : "false");
-  els.bobbleBtn?.setAttribute("aria-label", on ? "Disable highlight browser" : "Enable highlight browser");
-  if (els.bobbleBtn) els.bobbleBtn.title = on ? "Highlight browser on" : "Highlight browser off";
+  els.bobbleBtn?.setAttribute("aria-label", on ? "Disable 25× slideshow" : "Enable 25× slideshow");
+  if (els.bobbleBtn) els.bobbleBtn.title = on ? "25× slideshow on" : "25× slideshow off";
   els.bobbleBtn?.classList.toggle("is-off", !on);
 }
 
@@ -2455,7 +2461,7 @@ function paintCanvasBoard(listing) {
         <button class="canvas-open" type="button" data-canvas-open="${index}">
           <span class="card-photo">
             <img src="${escapeHtml(post.src || "")}" alt="${escapeHtml(title)}" />
-            <span class="bobble-layer" aria-hidden="true"></span>
+            <span class="slide-layer bobble-layer" aria-hidden="true"></span>
           </span>
         </button>
         ${caption ? `<p class="canvas-caption">${escapeHtml(caption)}</p>` : ""}
@@ -2467,7 +2473,7 @@ function paintCanvasBoard(listing) {
     })
     .join("");
   els.canvasWall.querySelectorAll(".canvas-open").forEach((open) => {
-    bobble.attachBobbles(open.querySelector(".card-photo"), open.querySelector("img"));
+    bobble.attachSlideshow(open.querySelector(".card-photo"), open.querySelector("img"));
   });
 }
 
