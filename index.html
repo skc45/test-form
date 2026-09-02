@@ -21,16 +21,17 @@
   <body>
     <svg class="sd-bobble-defs" aria-hidden="true" width="0" height="0">
       <defs>
-        <filter id="sd-bobble" x="-48%" y="-48%" width="196%" height="196%" color-interpolation-filters="sRGB">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="2.4" result="blur" />
-          <feComponentTransfer in="blur" result="soft">
-            <feFuncA type="linear" slope="1.55" intercept="-0.12" />
-          </feComponentTransfer>
-          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.016 0.022" numOctaves="2" seed="3" result="noise">
-            <animate attributeName="baseFrequency" dur="3.2s" values="0.014 0.022;0.022 0.014;0.014 0.022" repeatCount="indefinite" />
+        <filter id="sd-bobble" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
+          <feTurbulence id="sdBobbleNoise" type="fractalNoise" baseFrequency="0.0048 0.0062" numOctaves="1" seed="2" result="noise">
+            <animate attributeName="baseFrequency" dur="3.4s" values="0.0042 0.0064;0.007 0.0046;0.0042 0.0064" repeatCount="indefinite" />
           </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G" result="wobble" />
-          <feComposite in="wobble" in2="soft" operator="in" />
+          <feGaussianBlur in="noise" stdDeviation="10" result="stretch" />
+          <feDisplacementMap in="SourceGraphic" in2="stretch" scale="38" xChannelSelector="R" yChannelSelector="G" result="warp" />
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="edge" />
+          <feComponentTransfer in="edge" result="soft">
+            <feFuncA type="linear" slope="1.35" intercept="-0.08" />
+          </feComponentTransfer>
+          <feComposite in="warp" in2="soft" operator="in" />
         </filter>
       </defs>
     </svg>

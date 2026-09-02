@@ -7,8 +7,8 @@ let busy = false;
 let enabled = true;
 
 const SCAN_SIZE = 192;
-const FACE_SCORE_MIN = 18;
-const MAX_MODELS = 6;
+const FACE_SCORE_MIN = 26;
+const MAX_MODELS = 4;
 const DEFAULT_FACE = { x: 0.18, y: 0.06, w: 0.64, h: 0.72, score: 1, assumed: true };
 const BOBBLE_KEY = "aperture-bobble";
 
@@ -195,6 +195,8 @@ function cutImage(img, box) {
   face.style.height = `${(100 / (box.height / 100)).toFixed(3)}%`;
   face.style.left = `${(-(box.left / box.width) * 100).toFixed(3)}%`;
   face.style.top = `${(-(box.top / box.height) * 100).toFixed(3)}%`;
+  face.style.transform = "scale(1.48)";
+  face.style.transformOrigin = "50% 40%";
   return face;
 }
 
@@ -231,11 +233,11 @@ function displayBoxes(img, models) {
 
 async function measureModels(img) {
   const apiFaces = await detectFaces(img);
-  const real = nms(apiFaces, MAX_MODELS, 0.32)
-    .map((box) => expand(box, 0.1))
+  const structured = await enqueue(() => detectByFeatures(img));
+  const found = nms([...apiFaces, ...structured], MAX_MODELS, 0.32)
+    .map((box) => expand(box, box.fromApi ? 0.22 : 0.18))
     .filter(validBox);
-  if (real.length) return real;
-  return [assumedFace()];
+  return found.length ? found : [assumedFace()];
 }
 
 async function detectFaces(img) {
@@ -618,12 +620,12 @@ function iou(a, b) {
   return union ? inter / union : 0;
 }
 
-function expand(box, pad = 0.08) {
-  const w = Math.min(0.62, box.w * (1 + pad));
-  const h = Math.min(0.7, box.h * (1 + pad * 1.15));
+function expand(box, pad = 0.16) {
+  const w = Math.min(0.74, box.w * (1 + pad * 1.4));
+  const h = Math.min(0.84, box.h * (1 + pad * 1.6));
   const x = clamp(box.x + box.w / 2 - w / 2, 0, 1 - w);
-  const y = clamp(box.y + box.h / 2 - h / 2 - box.h * 0.03, 0, 1 - h);
-  return { x, y, w, h, score: box.score || 0 };
+  const y = clamp(box.y + box.h / 2 - h / 2 - box.h * 0.02, 0, 1 - h);
+  return { x, y, w, h, score: box.score || 0, fromApi: Boolean(box.fromApi) };
 }
 
 function validBox(box) {
